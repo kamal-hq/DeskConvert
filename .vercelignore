@@ -1,0 +1,12 @@
+core/
+desktop/
+utils/
+tests/
+assets/
+dist/
+build/
+installer_assets/
+installer_output/
+DeskConvert.spec
+DeskConvert.iss
+*.md

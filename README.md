@@ -54,10 +54,10 @@ Vercel deploys directly from the repository root via [vercel.json](vercel.json) 
 ### Windows Standalone App
 
 ```bash
-python -m pip install -r requirements.txt
+python -m pip install -r desktop/requirements.txt
 npm run build
-python main.py     # launch native WebView2 desktop studio
-python -m pytest tests/test_core.py -v
+python desktop/main.py     # launch native WebView2 desktop studio
+python -m pytest tests/test_core.py tests/test_bridge.py -v
 ```
 
 ### Build Windows Installer (`.exe`)

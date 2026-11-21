@@ -3,8 +3,8 @@
 block_cipher = None
 
 a = Analysis(
-    ['main.py'],
-    pathex=[],
+    ['desktop/main.py'],
+    pathex=['.'],
     binaries=[],
     datas=[
         ('dist_web', 'dist_web'),

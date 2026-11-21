@@ -1,4 +1,4 @@
-# DeskConvert v2.0 Requirements
+# DeskConvert v2.0 Desktop Requirements (Windows Standalone App)
 
 # Desktop Shell (Native WebView2 on Windows)
 pywebview>=6.0
