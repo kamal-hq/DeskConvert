@@ -1,178 +1,79 @@
 # DeskConvert
 
-> **Local Desktop File Converter**  
-> A 100% offline Windows desktop application for PDF and image
-> conversion, built and maintained by **Muhammad Kamal**.
+> **Privacy-First Local PDF & Image Studio**  
+> Available both **online in your browser (Vercel)** and as a **standalone Windows desktop app**, built and maintained by **Muhammad Kamal**.
 
 ---
 
-## Download
+## Live Web App & Desktop Installer
 
-> **No Python required. No setup. Just install and run.**
-
-| Download | Details |
-| :--- | :--- |
-| **[DeskConvert_Setup.exe](../../releases/latest)** | Windows 10/11 — 64-bit |
-
-**The installer automatically handles:**
-- DeskConvert application
-- Tesseract OCR (for the OCR feature)
-- Poppler (for PDF processing)
-- Desktop shortcut and Start Menu entry
-
----
-
-## Overview
-
-**DeskConvert** is a privacy-first, fully offline desktop utility
-for converting, merging, splitting, compressing, and OCR-processing
-PDF and image files — without uploading your data to any website,
-server, or third-party service.
-
-Built with a strict file-safety architecture: original source files
-are read-only and never modified. All processing runs through a
-hidden OS-level staging cache, and every export is non-destructive
-with automatic safe-naming to guarantee zero overwrites.
+- **Web App (Zero Uploads):** Runs 100% locally in your browser using WebAssembly (`pdf-lib`, `pdfjs-dist`, HTML5 Canvas, `jszip`, and `tesseract.js`). Your files never leave your device.
+- **Windows Desktop App (`DeskConvert_Setup.exe`):** Uses the exact same studio UI wrapped in a native WebView2 shell (`pywebview`) powered by offline Python engines (`PyMuPDF`, `Pillow`, `Tesseract OCR`, `Poppler`) for large batches, recursive folder drops, and Quick Save.
 
 ---
 
 ## Features
 
-| Feature | Details |
-| :--- | :--- |
-| **PDF → Image** | Extract pages as JPG or PNG at Screen (72), Print (300), or Custom DPI |
-| **Image → PDF** | Lossless image-to-PDF with smart DPI-aware page sizing |
-| **Merge Files** | Combine multiple PDFs, images, or mixed files into one PDF |
-| **Split PDF** | Extract page ranges (single or individual files) with multi-range support |
-| **Batch Convert** | Convert entire folders of images between formats in one operation |
-| **OCR** | Scanned PDF → Searchable PDF or plain text file via Tesseract |
-| **Compression** | Target-size compression with live suggestion and batch mode |
-| **Watermark** | Auto-applied branding on all outputs (toggleable, OCR excluded) |
-| **Metadata Control** | Keep or strip EXIF, author, and timestamp data from outputs |
-| **History Panel** | Quick-reload last 10 files with missing-file detection |
-| **Preview Modal** | Full-resolution page preview before export |
+| Feature | Web (Browser WASM) | Windows Desktop App |
+| :--- | :--- | :--- |
+| **PDF → Image** | JPG, PNG, WebP (72–600 DPI, ZIP export) | JPG, PNG, WebP (72–1200 DPI, safe folder output) |
+| **Image → PDF** | DPI-aware lossless PDF layout | DPI-aware PDF via `PyMuPDF` |
+| **Merge & Reorder** | Drag-and-drop mixed PDF/image storyboard | Drag-and-drop mixed PDF/image storyboard |
+| **Split PDF** | Multi-range Single PDF or Individual ZIP | Multi-range Single PDF or Individual PDFs |
+| **Batch Image Convert** | JPG, PNG, WebP, BMP, TIFF | JPG, PNG, WebP, BMP, TIFF |
+| **Smart Compression** | Adaptive PDF + image quality targeting | Adaptive PDF + image quality targeting |
+| **OCR Studio** | `tesseract.js` Searchable PDF & `.txt` | Native Tesseract + Poppler Searchable PDF & `.txt` |
+| **Watermark & Metadata** | Toggleable stamp (OCR excluded) & strip/keep | Toggleable stamp (OCR excluded) & strip/keep |
+| **Recent History & Preview** | Local browser history + zoomable modal | Local persistent history + missing-file check |
 
 ---
 
-## Architecture
+## Project Documentation
 
-```text
-[ main.py — Entry Point ]
-          │
-          ├──► CacheManager (core/cache_manager.py)
-          │      └── Stages files to OS temp dir via tempfile.mkdtemp()
-          │      └── Generates low-res thumbnails for UI display
-          │      └── Clears cache on app exit
-          │
-          ├──► Processing Engines (core/)
-          │      ├── pdf_engine.py     — PyMuPDF: merge, split, PDF→image
-          │      ├── image_engine.py   — Pillow: format conversion, batch
-          │      ├── ocr_engine.py     — pdf2image + Tesseract: OCR pipeline
-          │      ├── watermark.py      — PyMuPDF + Pillow: watermark stamp
-          │      ├── metadata.py       — EXIF keep/strip
-          │      ├── compression.py    — Binary search quality targeting
-          │      └── export.py         — Safe naming, folder routing
-          │
-          ├──► Background Workers (workers/)
-          │      └── QThread subclasses — UI never freezes during processing
-          │
-          ├──► UI Layer (ui/)
-          │      ├── main_window.py    — Root window, signal wiring
-          │      ├── center_panel.py   — Drag-drop zone + storyboard grid
-          │      ├── right_panel.py    — Actions, compression, page selection
-          │      ├── left_panel.py     — Collapsible history panel
-          │      ├── thumbnail_widget.py — Draggable page cards with preview
-          │      ├── preview_modal.py  — Full-res page preview dialog
-          │      ├── settings_dialog.py — DPI, watermark, metadata, output dir
-          │      ├── notifications.py  — Non-crashing error/info dialogs
-          │      └── status_bar.py     — Operation, file count, export path
-          │
-          └──► Utilities (utils/)
-                 ├── settings.py   — QSettings (Windows Registry persistence)
-                 ├── history.py    — 10-item history manager
-                 └── validators.py — File type, password, compression checks
+- [architecture.md](architecture.md) — Dual-platform Web + Desktop architecture and data flow
+- [design.md](design.md) — Figma-derived design tokens, layout, and v2.0 iconography
+- [rule.md](rule.md) — Privacy, file-safety, storyboard fidelity, and testing rules
+- [phase.md](phase.md) — v2.0 revamp roadmap and milestone checklist
+- [memory.md](memory.md) — Engineering decision log and audit history
+
+---
+
+## Local Development
+
+### Web Studio (Vercel Target)
+
+```bash
+npm install
+npm run dev        # local Vite dev server
+npm run test       # Vitest unit tests
+npm run build      # Typecheck + production bundle -> dist_web/
 ```
 
----
+Vercel deploys directly from the repository root via [vercel.json](vercel.json) (`npm run build` → `dist_web/`).
 
-## Module Map
+### Windows Standalone App
 
-| Module | Responsibility |
-| :--- | :--- |
-| `core/cache_manager.py` | File staging, thumbnail generation, cache lifecycle |
-| `core/pdf_engine.py` | All PDF read/write operations via PyMuPDF |
-| `core/image_engine.py` | Image format conversion via Pillow |
-| `core/ocr_engine.py` | OCR pipeline — searchable PDF and text extraction |
-| `core/watermark.py` | Watermark application for PDF and image outputs |
-| `core/metadata.py` | EXIF and PDF metadata keep/strip operations |
-| `core/compression.py` | Binary-search quality targeting for size compression |
-| `core/export.py` | Safe output naming and directory routing |
-| `workers/*.py` | QThread workers — non-blocking background processing |
-| `ui/main_window.py` | Root orchestrator — layout, signals, worker dispatch |
-| `utils/settings.py` | QSettings wrapper — Windows Registry persistence |
-| `utils/history.py` | History list management with file existence checks |
-| `utils/validators.py` | File type detection and compression constraint checks |
+```bash
+python -m pip install -r requirements.txt
+npm run build
+python main.py     # launch native WebView2 desktop studio
+python -m pytest tests/test_core.py -v
+```
 
----
+### Build Windows Installer (`.exe`)
 
-## Prerequisites
+```bash
+npm run build
+pyinstaller DeskConvert.spec --noconfirm
+iscc DeskConvert.iss
+```
 
-- **Python 3.10+**
-- **Poppler for Windows** (required by pdf2image)  
-  Download: <https://github.com/oschwartz10612/poppler-windows/releases>
-  Add the `bin/` folder to your system PATH.
-- **Tesseract OCR** (required for OCR feature)  
-  Download: <https://github.com/UB-Mannheim/tesseract/wiki>
-  Add the install directory to your system PATH.
+Installer output: `installer_output/DeskConvert_Setup.exe`
 
 ---
 
-## Installation
-
-### Option A — Windows Installer (Recommended)
-
-Download `DeskConvert_Setup.exe` from the 
-[Releases](../../releases/latest) page and run it.
-No Python, no dependencies, no configuration required.
-
-### Option B — Run from Source (Developers)
-
-**Prerequisites:**
-- Python 3.10+
-- Poppler for Windows — add `bin/` to PATH  
-  https://github.com/oschwartz10612/poppler-windows/releases
-- Tesseract OCR — add to PATH  
-  https://github.com/UB-Mannheim/tesseract/wiki
-
-**Steps:**
-
-    git clone https://github.com/muhammad-kamal-asif/deskconvert.git
-    cd deskconvert
-    python -m venv .venv
-    .venv\Scripts\activate
-    pip install -r requirements.txt
-    python main.py
-
----
-
-## Supported Formats
-
-**Input:** PDF, JPG, JPEG, PNG, WebP, BMP, TIFF  
-**Output:** PDF, JPG, PNG, WebP, BMP, TIFF, TXT (OCR)
-
----
-
-## Releases
-
-| Version | Date | Notes |
-| :--- | :--- | :--- |
-| v1.0 | September 2026 | Initial public release |
-
----
-
-## Author
+## Author & License
 
 - **Developer**: Muhammad Kamal
-- **GitHub**: [muhammad-kamal-asif](https://github.com/muhammad-kamal-asif)
-- **Project Type**: Personal utility tool (portfolio project)
+- **Repository**: [kamal-hq/DeskConvert](https://github.com/kamal-hq/DeskConvert)
 - **License**: MIT

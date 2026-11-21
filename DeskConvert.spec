@@ -7,17 +7,17 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
+        ('dist_web', 'dist_web'),
         ('assets', 'assets'),
-        ('ui', 'ui'),
         ('core', 'core'),
-        ('workers', 'workers'),
+        ('desktop', 'desktop'),
         ('utils', 'utils'),
     ],
     hiddenimports=[
-        'PyQt6',
-        'PyQt6.QtCore',
-        'PyQt6.QtGui',
-        'PyQt6.QtWidgets',
+        'webview',
+        'bottle',
+        'pythonnet',
+        'clr_loader',
         'pymupdf',
         'fitz',
         'PIL',
@@ -25,20 +25,17 @@ a = Analysis(
         'PIL.ImageDraw',
         'PIL.ImageFont',
         'PIL.ExifTags',
-        'img2pdf',
         'pdf2image',
         'pytesseract',
-        'pikepdf',
-        'packaging',
         'statistics',
         'tempfile',
         'shutil',
-        'struct',
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
+        'PyQt6',
         'tkinter',
         'matplotlib',
         'numpy',
@@ -54,11 +51,7 @@ a = Analysis(
     noarchive=False,
 )
 
-pyz = PYZ(
-    a.pure, 
-    a.zipped_data,
-    cipher=block_cipher
-)
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(
     pyz,

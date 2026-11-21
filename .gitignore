@@ -1,7 +1,15 @@
-# PyInstaller build output
+# PyInstaller & Vite build output
 dist/
+dist_web/
 build/
 *.spec.bak
+
+# Node dependencies
+node_modules/
+.vercel/
+
+# Test & Python cache
+.pytest_cache/
 
 # Installer assets and output
 installer_assets/

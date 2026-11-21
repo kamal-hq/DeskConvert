@@ -1,5 +1,5 @@
 #define MyAppName "DeskConvert"
-#define MyAppVersion "1.0"
+#define MyAppVersion "2.0.0"
 #define MyAppPublisher "Muhammad Kamal"
 #define MyAppExeName "DeskConvert.exe"
 
@@ -8,7 +8,7 @@ AppId={{DC2024-DESKCONVERT-MK-001}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-AppPublisherURL=https://github.com/muhammad-kamal-asif
+AppPublisherURL=https://github.com/kamal-hq/DeskConvert
 DefaultDirName={autopf}\DeskConvert
 DefaultGroupName={#MyAppName}
 OutputDir=installer_output
