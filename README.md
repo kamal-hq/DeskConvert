@@ -7,7 +7,12 @@
 
 ## Live Web App & Desktop Installer
 
-- **Web App (Zero Uploads):** Runs 100% locally in your browser using WebAssembly (`pdf-lib`, `pdfjs-dist`, HTML5 Canvas, `jszip`, and `tesseract.js`). Your files never leave your device.
+| Platform | Access Link | Details |
+| :--- | :--- | :--- |
+| **Web Studio (Live)** | **[https://desk-convert.vercel.app/](https://desk-convert.vercel.app/)** | 100% in-browser WASM — zero uploads, instant access |
+| **Windows Desktop App** | **[DeskConvert_Setup.exe](https://github.com/kamal-hq/DeskConvert/releases/latest/download/DeskConvert_Setup.exe)** | Windows 10/11 (64-bit) — bundles Poppler & Tesseract OCR |
+
+- **Web App (Zero Uploads):** Runs 100% locally in your browser at **[desk-convert.vercel.app](https://desk-convert.vercel.app/)** using WebAssembly (`pdf-lib`, `pdfjs-dist`, HTML5 Canvas, `jszip`, and `tesseract.js`). Your files never leave your device.
 - **Windows Desktop App (`DeskConvert_Setup.exe`):** Uses the exact same studio UI wrapped in a native WebView2 shell (`pywebview`) powered by offline Python engines (`PyMuPDF`, `Pillow`, `Tesseract OCR`, `Poppler`) for large batches, recursive folder drops, and Quick Save.
 
 ---
