@@ -23,9 +23,11 @@ import {
   compressWebTarget,
   exportWebBatchImages,
   exportWebPdfToImages,
+  exportWebSeparatePdfs,
   exportWebSplitPdf,
   getWebSource,
   ingestWebFiles,
+  removeWebSource,
   renderWebFullResPreview,
   runWebOcr,
   triggerBrowserDownload,
@@ -47,6 +49,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
 };
 
+const ALL_IMAGE_FORMATS: ImageOutputFormat[] = ['JPG', 'PNG', 'WEBP', 'BMP', 'TIFF'];
+
 const TOOL_ITEMS: Array<{ id: ToolMode; label: string; icon: IconName; badge?: string }> = [
   { id: 'pdf_to_image', label: 'To image', icon: 'image' },
   { id: 'image_to_pdf', label: 'To PDF', icon: 'file' },
@@ -62,12 +66,12 @@ const QUICK_TOOL_CARDS: Array<{
   desc: string;
   icon: IconName;
 }> = [
-  { mode: 'pdf_to_image', title: 'PDF → Images', desc: 'Export pages as JPG, PNG, or WebP up to 600 DPI', icon: 'image' },
-  { mode: 'image_to_pdf', title: 'Images → PDF', desc: 'DPI-aware lossless PDF layout from photos & scans', icon: 'file' },
-  { mode: 'merge', title: 'Merge & Reorder', desc: 'Combine mixed PDFs and images in visual card order', icon: 'layers' },
-  { mode: 'split', title: 'Split PDF', desc: 'Extract multi-page ranges as single or separate PDFs', icon: 'scissors' },
-  { mode: 'batch_convert', title: 'Batch Convert', desc: 'Convert image folders across JPG, PNG, WebP, BMP, TIFF', icon: 'grid' },
-  { mode: 'ocr', title: 'OCR Studio', desc: 'Turn scanned PDFs into searchable PDFs or plain text', icon: 'wand' },
+  { mode: 'pdf_to_image', title: 'PDF / Files → Images', desc: 'Export unlimited pages as JPG, PNG, WebP, BMP, or TIFF', icon: 'image' },
+  { mode: 'image_to_pdf', title: 'Files → PDF', desc: 'Convert any number of images or PDFs into combined or separate PDFs', icon: 'file' },
+  { mode: 'merge', title: 'Merge & Reorder', desc: 'Combine unlimited mixed PDFs and images in visual card order', icon: 'layers' },
+  { mode: 'split', title: 'Split & Extract', desc: 'Extract multi-page ranges, selected cards, or fixed N-page chunks', icon: 'scissors' },
+  { mode: 'batch_convert', title: 'Universal Batch', desc: 'Bulk-convert entire folders of PDFs & images in one pass', icon: 'grid' },
+  { mode: 'ocr', title: 'OCR Studio', desc: 'Turn scanned PDFs & images into searchable PDFs or plain text', icon: 'wand' },
 ];
 
 function loadWebSettings(): AppSettings {
@@ -139,6 +143,7 @@ export default function App() {
   const [history, setHistory] = useState<HistoryEntry[]>(loadWebHistory);
   const [historySearch, setHistorySearch] = useState('');
   const [historyOpen, setHistoryOpen] = useState(true);
+  const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
 
   const [items, setItems] = useState<StoryboardItem[]>([]);
   const [undoItem, setUndoItem] = useState<{ index: number; item: StoryboardItem } | null>(null);
@@ -150,6 +155,7 @@ export default function App() {
   const [toolMode, setToolMode] = useState<ToolMode>('pdf_to_image');
   const [imageFormat, setImageFormat] = useState<ImageOutputFormat>('JPG');
   const [dpiOption, setDpiOption] = useState<string>('300');
+  const [pdfExportMode, setPdfExportMode] = useState<'combined' | 'separate'>('combined');
   const [splitMode, setSplitMode] = useState<SplitOutputMode>('single');
   const [splitRanges, setSplitRanges] = useState<PageRange[]>([{ id: 'r1', from: 1, to: 1 }]);
   const [ocrMode, setOcrMode] = useState<OcrOutputMode>('searchable_pdf');
@@ -186,7 +192,6 @@ export default function App() {
     []
   );
 
-  // Detect pywebview ready event when running in native Windows desktop shell
   useEffect(() => {
     const syncDesktop = async () => {
       const api = getDesktopApi();
@@ -240,27 +245,26 @@ export default function App() {
     [desktopApi]
   );
 
-  const recordHistory = useCallback(
-    (fileName: string, kind: 'pdf' | 'image', pageCount: number, sizeBytes: number, path?: string) => {
+  const recordHistoryBatch = useCallback(
+    (newEntries: Array<{ fileName: string; kind: 'pdf' | 'image'; pageCount: number; sizeBytes: number; path?: string }>) => {
       if (desktopApi) {
         void desktopApi.get_history().then(setHistory).catch(() => {});
         return;
       }
       setHistory((prev) => {
-        const filtered = prev.filter((h) => h.name !== fileName);
-        const next: HistoryEntry[] = [
-          {
-            id: `${Date.now()}_${fileName}`,
-            name: fileName,
-            path,
-            kind,
-            pageCount,
-            sizeBytes,
-            timestamp: Date.now(),
-            exists: true,
-          },
-          ...filtered,
-        ].slice(0, 10);
+        const incomingNames = new Set(newEntries.map((e) => e.fileName));
+        const filtered = prev.filter((h) => !incomingNames.has(h.name));
+        const mapped: HistoryEntry[] = newEntries.map((e, idx) => ({
+          id: `${Date.now()}_${idx}_${e.fileName}`,
+          name: e.fileName,
+          path: e.path,
+          kind: e.kind,
+          pageCount: e.pageCount,
+          sizeBytes: e.sizeBytes,
+          timestamp: Date.now(),
+          exists: true,
+        }));
+        const next = [...mapped, ...filtered].slice(0, 100);
         try {
           localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(next));
         } catch {
@@ -272,22 +276,37 @@ export default function App() {
     [desktopApi]
   );
 
-  const totalUniqueFiles = useMemo(() => new Set(items.map((i) => i.sourceId)).size, [items]);
-  const hasPdf = useMemo(() => items.some((i) => i.kind === 'pdf'), [items]);
-  const hasImages = useMemo(() => items.some((i) => i.kind === 'image'), [items]);
-  const selectedItems = useMemo(() => items.filter((i) => i.selected), [items]);
-
-  const totalEstimatedInputBytes = useMemo(() => {
-    const seen = new Set<string>();
-    let total = 0;
+  const stagedFilesSummary = useMemo(() => {
+    const map = new Map<
+      string,
+      { sourceId: string; fileName: string; kind: 'pdf' | 'image'; cardCount: number; sizeBytes: number }
+    >();
     for (const item of items) {
-      if (!seen.has(item.sourceId)) {
-        seen.add(item.sourceId);
-        total += item.sizeBytes;
+      const existing = map.get(item.sourceId);
+      if (existing) {
+        existing.cardCount += 1;
+      } else {
+        map.set(item.sourceId, {
+          sourceId: item.sourceId,
+          fileName: item.fileName,
+          kind: item.kind,
+          cardCount: 1,
+          sizeBytes: item.sizeBytes,
+        });
       }
     }
-    return total;
+    return Array.from(map.values());
   }, [items]);
+
+  const totalUniqueFiles = stagedFilesSummary.length;
+  const hasPdf = useMemo(() => items.some((i) => i.kind === 'pdf'), [items]);
+  const selectedItems = useMemo(() => items.filter((i) => i.selected), [items]);
+  const activeTargets = selectedItems.length > 0 ? selectedItems : items;
+
+  const totalEstimatedInputBytes = useMemo(
+    () => stagedFilesSummary.reduce((acc, f) => acc + f.sizeBytes, 0),
+    [stagedFilesSummary]
+  );
 
   const targetCompressionBytes = useMemo(() => {
     const num = Number.parseFloat(targetSizeValue.replace(',', '.'));
@@ -301,7 +320,6 @@ export default function App() {
     return analyzeCompressionTarget(baseBytes, targetCompressionBytes);
   }, [compressionEnabled, items, targetCompressionBytes, totalEstimatedInputBytes]);
 
-  // Keep split range bounds synced with page count
   useEffect(() => {
     if (items.length > 0) {
       setSplitRanges([{ id: 'r1', from: 1, to: items.length }]);
@@ -326,9 +344,7 @@ export default function App() {
       setToolMode('merge');
     } else if (anyPdf) {
       setToolMode('pdf_to_image');
-    } else if (loaded.length > 1) {
-      setToolMode('image_to_pdf');
-    } else if (loaded.length === 1) {
+    } else {
       setToolMode('image_to_pdf');
     }
   }, []);
@@ -339,7 +355,7 @@ export default function App() {
       try {
         setProcessing(true);
         setProgressPct(25);
-        setProgressLabel('Loading files locally…');
+        setProgressLabel('Staging files locally…');
         const res = await desktopApi.stage_paths(paths);
         if (res.rejected.length > 0) {
           pushToast('error', 'Unsupported files skipped', res.rejected.join(', '));
@@ -373,7 +389,7 @@ export default function App() {
       try {
         setProcessing(true);
         setProgressPct(20);
-        setProgressLabel('Rendering page previews locally…');
+        setProgressLabel(`Loading ${files.length} file${files.length === 1 ? '' : 's'} locally…`);
 
         if (desktopApi) {
           const encoded = await Promise.all(
@@ -417,14 +433,22 @@ export default function App() {
             if (prev.length === 0) applySmartToolSelection(combined);
             return combined;
           });
-          const first = res.items[0];
-          const firstSrc = getWebSource(first.sourceId);
-          recordHistory(
-            first.fileName,
-            first.kind,
-            firstSrc?.pageCount ?? 1,
-            firstSrc?.sizeBytes ?? first.sizeBytes
-          );
+          // Record every newly loaded unique source in local history
+          const seenSrc = new Set<string>();
+          const histEntries: Array<{ fileName: string; kind: 'pdf' | 'image'; pageCount: number; sizeBytes: number }> = [];
+          for (const it of res.items) {
+            if (!seenSrc.has(it.sourceId)) {
+              seenSrc.add(it.sourceId);
+              const src = getWebSource(it.sourceId);
+              histEntries.push({
+                fileName: it.fileName,
+                kind: it.kind,
+                pageCount: src?.pageCount ?? 1,
+                sizeBytes: src?.sizeBytes ?? it.sizeBytes,
+              });
+            }
+          }
+          recordHistoryBatch(histEntries);
         }
       } catch (err) {
         pushToast('error', 'Failed to read file', err instanceof Error ? err.message : String(err));
@@ -434,7 +458,7 @@ export default function App() {
         setProgressLabel('');
       }
     },
-    [applySmartToolSelection, desktopApi, pushToast, recordHistory]
+    [applySmartToolSelection, desktopApi, pushToast, recordHistoryBatch]
   );
 
   const handleBrowseClick = async (mode: 'files' | 'folder' = 'files') => {
@@ -450,6 +474,15 @@ export default function App() {
     } else {
       fileInputRef.current?.click();
     }
+  };
+
+  const removeSourceFile = (sourceId: string) => {
+    setItems((prev) => prev.filter((i) => i.sourceId !== sourceId));
+    removeWebSource(sourceId);
+  };
+
+  const selectSourceFilePages = (sourceId: string) => {
+    setItems((prev) => prev.map((i) => (i.sourceId === sourceId ? { ...i, selected: true } : i)));
   };
 
   const deleteCard = useCallback((cardId: string) => {
@@ -476,6 +509,45 @@ export default function App() {
 
   const toggleSelectCard = (cardId: string) => {
     setItems((prev) => prev.map((i) => (i.id === cardId ? { ...i, selected: !i.selected } : i)));
+  };
+
+  const applySelectedCardsToSplitRanges = () => {
+    const selectedIndices = items
+      .map((item, idx) => (item.selected ? idx + 1 : -1))
+      .filter((n) => n > 0);
+    if (selectedIndices.length === 0) {
+      pushToast('info', 'No cards checked', 'Check one or more page cards on the canvas first.');
+      return;
+    }
+    const ranges: PageRange[] = [];
+    let start = selectedIndices[0];
+    let prev = selectedIndices[0];
+    for (let i = 1; i < selectedIndices.length; i++) {
+      const curr = selectedIndices[i];
+      if (curr === prev + 1) {
+        prev = curr;
+      } else {
+        ranges.push({ id: `sel_${start}_${prev}`, from: start, to: prev });
+        start = curr;
+        prev = curr;
+      }
+    }
+    ranges.push({ id: `sel_${start}_${prev}`, from: start, to: prev });
+    setSplitRanges(ranges);
+  };
+
+  const applyChunkSplitRanges = (chunkSize: number) => {
+    const total = Math.max(1, items.length);
+    const step = Math.max(1, chunkSize);
+    const ranges: PageRange[] = [];
+    for (let start = 1; start <= total; start += step) {
+      const end = Math.min(total, start + step - 1);
+      ranges.push({ id: `chunk_${start}_${end}`, from: start, to: end });
+    }
+    setSplitRanges(ranges);
+    if (ranges.length > 1) {
+      setSplitMode('individual');
+    }
   };
 
   const openPreviewAt = useCallback(
@@ -542,11 +614,11 @@ export default function App() {
 
     try {
       if (desktopApi) {
-        const payloadItems = items.map((i) => ({ sourceId: i.sourceId, pageIndex: i.pageIndex }));
+        const payloadItems = activeTargets.map((i) => ({ sourceId: i.sourceId, pageIndex: i.pageIndex }));
         let result = null;
         if (toolMode === 'pdf_to_image') {
           result = await desktopApi.export_pdf_to_images({
-            items: selectedItems.length > 0 ? selectedItems.map((i) => ({ sourceId: i.sourceId, pageIndex: i.pageIndex })) : payloadItems,
+            items: payloadItems,
             format: imageFormat,
             dpi: dpiVal,
             watermarkEnabled: settings.watermarkEnabled,
@@ -559,6 +631,7 @@ export default function App() {
             watermarkEnabled: settings.watermarkEnabled,
             metadataAction: settings.metadataAction,
             compressionBytes: compressionTarget,
+            separateFiles: pdfExportMode === 'separate',
           });
         } else if (toolMode === 'merge') {
           result = await desktopApi.merge_files({
@@ -569,7 +642,7 @@ export default function App() {
           });
         } else if (toolMode === 'split') {
           result = await desktopApi.split_pdf({
-            items: payloadItems,
+            items: items.map((i) => ({ sourceId: i.sourceId, pageIndex: i.pageIndex })),
             ranges: splitRanges,
             mode: splitMode,
             watermarkEnabled: settings.watermarkEnabled,
@@ -579,6 +652,7 @@ export default function App() {
           result = await desktopApi.batch_convert_images({
             items: payloadItems,
             format: imageFormat,
+            dpi: dpiVal,
             watermarkEnabled: settings.watermarkEnabled,
             metadataAction: settings.metadataAction,
             compressionBytes: compressionTarget,
@@ -599,7 +673,7 @@ export default function App() {
         return;
       }
 
-      // Browser WASM execution
+      // Browser WASM execution (supports unlimited files, mixed PDFs & images)
       const onProg = (pct: number, msg: string) => {
         setProgressPct(pct);
         setProgressLabel(msg);
@@ -607,11 +681,26 @@ export default function App() {
 
       let out: { fileName: string; blob: Blob; mimeType: string };
       if (toolMode === 'pdf_to_image') {
-        out = await exportWebPdfToImages(items, imageFormat, dpiVal, settings.watermarkEnabled, onProg);
-      } else if (toolMode === 'image_to_pdf' || toolMode === 'merge') {
-        if (compressionTarget) {
-          out = await compressWebTarget(
+        out = await exportWebPdfToImages(
+          items,
+          imageFormat,
+          dpiVal,
+          settings.watermarkEnabled,
+          compressionTarget,
+          onProg
+        );
+      } else if (toolMode === 'image_to_pdf') {
+        if (pdfExportMode === 'separate') {
+          out = await exportWebSeparatePdfs(
             items,
+            settings.watermarkEnabled,
+            settings.metadataAction,
+            compressionTarget,
+            onProg
+          );
+        } else if (compressionTarget) {
+          out = await compressWebTarget(
+            activeTargets,
             compressionTarget,
             settings.watermarkEnabled,
             settings.metadataAction,
@@ -619,14 +708,37 @@ export default function App() {
           );
         } else {
           const pdfBytes = await buildWorkingPdfBytes(
-            items,
+            activeTargets,
             settings.watermarkEnabled,
             settings.metadataAction,
             onProg
           );
-          const stem = getFileStem(items[0].fileName);
+          const stem = getFileStem(activeTargets[0].fileName);
           out = {
-            fileName: `${stem}_${toolMode === 'merge' ? 'merged' : 'converted'}.pdf`,
+            fileName: `${stem}_converted.pdf`,
+            blob: new Blob([pdfBytes.slice()], { type: 'application/pdf' }),
+            mimeType: 'application/pdf',
+          };
+        }
+      } else if (toolMode === 'merge') {
+        if (compressionTarget) {
+          out = await compressWebTarget(
+            activeTargets,
+            compressionTarget,
+            settings.watermarkEnabled,
+            settings.metadataAction,
+            onProg
+          );
+        } else {
+          const pdfBytes = await buildWorkingPdfBytes(
+            activeTargets,
+            settings.watermarkEnabled,
+            settings.metadataAction,
+            onProg
+          );
+          const stem = getFileStem(activeTargets[0].fileName);
+          out = {
+            fileName: `${stem}_merged.pdf`,
             blob: new Blob([pdfBytes.slice()], { type: 'application/pdf' }),
             mimeType: 'application/pdf',
           };
@@ -641,7 +753,14 @@ export default function App() {
           onProg
         );
       } else if (toolMode === 'batch_convert') {
-        out = await exportWebBatchImages(items, imageFormat, settings.watermarkEnabled, onProg);
+        out = await exportWebBatchImages(
+          items,
+          imageFormat,
+          dpiVal,
+          settings.watermarkEnabled,
+          compressionTarget,
+          onProg
+        );
       } else {
         out = await runWebOcr(items, ocrMode, onProg);
       }
@@ -664,15 +783,16 @@ export default function App() {
       setProgressLabel('');
     }
   }, [
+    activeTargets,
     compressionEnabled,
     desktopApi,
     dpiOption,
     imageFormat,
     items,
     ocrMode,
+    pdfExportMode,
     processing,
     pushToast,
-    selectedItems,
     settings.metadataAction,
     settings.watermarkEnabled,
     splitMode,
@@ -688,7 +808,7 @@ export default function App() {
     setProgressLabel('Compressing locally…');
     try {
       if (desktopApi) {
-        const payloadItems = items.map((i) => ({ sourceId: i.sourceId, pageIndex: i.pageIndex }));
+        const payloadItems = activeTargets.map((i) => ({ sourceId: i.sourceId, pageIndex: i.pageIndex }));
         const res = hasPdf
           ? await desktopApi.merge_files({
               items: payloadItems,
@@ -720,7 +840,7 @@ export default function App() {
         }
       );
       triggerBrowserDownload(out.blob, out.fileName);
-      pushToast('success', 'Compressed file ready', `${out.fileName} (${formatBytes(out.blob.size)})`, {
+      pushToast('success', 'Compressed output ready', `${out.fileName} (${formatBytes(out.blob.size)})`, {
         artifact: { fileName: out.fileName, mimeType: out.mimeType, blob: out.blob, sizeBytes: out.blob.size },
       });
     } catch (err) {
@@ -732,7 +852,6 @@ export default function App() {
     }
   };
 
-  // Global keyboard shortcuts (Ctrl+Z, Ctrl+S, Delete)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -765,26 +884,21 @@ export default function App() {
       ? 'No active files'
       : totalUniqueFiles === 1
         ? items[0].fileName
-        : `${totalUniqueFiles} files staged`;
+        : `${totalUniqueFiles} files · ${items.length} cards`;
 
   const exportButtonLabel = useMemo(() => {
-    const count = selectedItems.length > 0 ? selectedItems.length : items.length;
+    const count = activeTargets.length;
     if (toolMode === 'pdf_to_image') return `Export ${count} image${count === 1 ? '' : 's'}`;
-    if (toolMode === 'image_to_pdf') return 'Convert to PDF';
+    if (toolMode === 'image_to_pdf') {
+      return pdfExportMode === 'separate' && count > 1
+        ? `Export ${count} separate PDFs`
+        : `Convert ${count} item${count === 1 ? '' : 's'} to PDF`;
+    }
     if (toolMode === 'merge') return `Merge ${count} page${count === 1 ? '' : 's'}`;
     if (toolMode === 'split') return splitMode === 'single' ? 'Export split PDF' : 'Export split pages';
-    if (toolMode === 'batch_convert') return `Convert ${items.filter((i) => i.kind === 'image').length || count} images`;
-    return ocrMode === 'searchable_pdf' ? 'Create searchable PDF' : 'Extract text (.txt)';
-  }, [items, ocrMode, selectedItems.length, splitMode, toolMode]);
-
-  const isToolAvailable = (mode: ToolMode): boolean => {
-    if (items.length === 0) return true;
-    if (mode === 'pdf_to_image') return hasPdf;
-    if (mode === 'image_to_pdf') return hasImages && !hasPdf;
-    if (mode === 'batch_convert') return hasImages;
-    if (mode === 'split') return hasPdf || items.length > 1;
-    return true;
-  };
+    if (toolMode === 'batch_convert') return `Batch convert ${count} item${count === 1 ? '' : 's'}`;
+    return ocrMode === 'searchable_pdf' ? `OCR ${count} page${count === 1 ? '' : 's'} → PDF` : `OCR ${count} page${count === 1 ? '' : 's'} → .txt`;
+  }, [activeTargets.length, ocrMode, pdfExportMode, splitMode, toolMode]);
 
   return (
     <main className={`app-shell ${settings.theme === 'light' ? 'light' : 'dark'}`}>
@@ -817,7 +931,7 @@ export default function App() {
             type="button"
             className="mobile-menu icon-button"
             aria-label="Toggle history drawer"
-            onClick={() => setHistoryOpen(!historyOpen)}
+            onClick={() => setHistoryOpen((v) => !v)}
           >
             <Icon name="menu" />
           </button>
@@ -833,19 +947,110 @@ export default function App() {
             <strong>DeskConvert</strong>
           </a>
           <span className="divider" />
-          <button
-            type="button"
-            className="session-pill"
-            onClick={() => {
-              if (items.length === 0) void handleBrowseClick('files');
-            }}
-            title={items.length > 0 ? `${items.length} storyboard cards loaded` : 'Load PDF or image files'}
-          >
-            <span className={`pdf-dot ${hasPdf ? '' : 'img-dot'}`}>{items.length === 0 ? 'NEW' : hasPdf ? 'PDF' : 'IMG'}</span>
-            <span>{activeSessionName}</span>
-            {items.length > 0 && <small>{formatBytes(totalEstimatedInputBytes)}</small>}
-            <Icon name="chevron" size={14} />
-          </button>
+
+          <div className="session-cluster">
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Toggle recent files panel"
+              title={historyOpen ? 'Hide recent files panel' : 'Show recent files panel'}
+              style={{
+                borderColor: historyOpen ? 'var(--accent)' : undefined,
+                color: historyOpen ? 'var(--text)' : undefined,
+              }}
+              onClick={() => setHistoryOpen((v) => !v)}
+            >
+              <Icon name="history" size={16} />
+            </button>
+
+            <button
+              type="button"
+              className="session-pill"
+              onClick={() => {
+                if (items.length === 0) {
+                  void handleBrowseClick('files');
+                } else {
+                  setSessionMenuOpen((v) => !v);
+                }
+              }}
+              title={items.length > 0 ? 'Manage loaded files' : 'Load PDF or image files'}
+            >
+              <span className={`pdf-dot ${hasPdf ? '' : 'img-dot'}`}>
+                {items.length === 0 ? 'NEW' : totalUniqueFiles > 1 ? 'MIX' : hasPdf ? 'PDF' : 'IMG'}
+              </span>
+              <span>{activeSessionName}</span>
+              {items.length > 0 && <small>{formatBytes(totalEstimatedInputBytes)}</small>}
+              <Icon name="chevron" size={14} />
+            </button>
+
+            {sessionMenuOpen && items.length > 0 && (
+              <div className="session-popover">
+                <div className="session-popover-head">
+                  <span>LOADED FILES ({stagedFilesSummary.length})</span>
+                  <button
+                    type="button"
+                    className="icon-button small"
+                    aria-label="Close loaded files menu"
+                    onClick={() => setSessionMenuOpen(false)}
+                  >
+                    <Icon name="close" size={13} />
+                  </button>
+                </div>
+                {stagedFilesSummary.map((file) => (
+                  <div className="session-file-row" key={file.sourceId}>
+                    <div>
+                      <b>{file.fileName}</b>
+                      <small>
+                        {file.cardCount} card{file.cardCount === 1 ? '' : 's'} · {formatBytes(file.sizeBytes)}
+                      </small>
+                    </div>
+                    <div className="session-file-actions">
+                      <button
+                        type="button"
+                        className="icon-button small"
+                        title="Select pages from this file"
+                        onClick={() => selectSourceFilePages(file.sourceId)}
+                      >
+                        <Icon name="check" size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-button small"
+                        title="Remove file from session"
+                        onClick={() => removeSourceFile(file.sourceId)}
+                      >
+                        <Icon name="trash" size={13} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                  <button
+                    type="button"
+                    className="soft-button"
+                    style={{ flex: 1, justifyContent: 'center' }}
+                    onClick={() => {
+                      setSessionMenuOpen(false);
+                      void handleBrowseClick('files');
+                    }}
+                  >
+                    <Icon name="plus" size={13} /> Add files
+                  </button>
+                  <button
+                    type="button"
+                    className="soft-button"
+                    style={{ flex: 1, justifyContent: 'center' }}
+                    onClick={() => {
+                      setSessionMenuOpen(false);
+                      void handleBrowseClick('folder');
+                    }}
+                  >
+                    <Icon name="folder" size={13} /> Add folder
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="privacy">
@@ -897,7 +1102,7 @@ export default function App() {
         </div>
       </header>
 
-      <section className="workspace">
+      <section className={`workspace ${historyOpen ? 'history-open' : 'history-closed'}`}>
         <aside className={`history-panel ${historyOpen ? 'open' : 'closed'}`}>
           <div className="panel-heading">
             <div>
@@ -923,7 +1128,7 @@ export default function App() {
             />
           </div>
 
-          <p className="date-label">RECENT SESSIONS</p>
+          <p className="date-label">RECENT SESSIONS ({filteredHistory.length})</p>
           <div className="history-list">
             {filteredHistory.length === 0 ? (
               <div className="history-empty">
@@ -945,7 +1150,7 @@ export default function App() {
                       }
                       void ingestDesktopPaths([entry.path]);
                     } else {
-                      pushToast('info', 'Browser security note', 'Drop or browse the local file again to reopen in browser.');
+                      pushToast('info', 'Reopen local file', 'Select or drop the file to load it into the current session.');
                       void handleBrowseClick('files');
                     }
                   }}
@@ -990,6 +1195,9 @@ export default function App() {
 
         <section
           className={`canvas ${dragOverCanvas ? 'drag-active' : ''}`}
+          onClick={() => {
+            if (sessionMenuOpen) setSessionMenuOpen(false);
+          }}
           onDragOver={(e) => {
             e.preventDefault();
             if (!e.dataTransfer.types.includes('application/x-deskconvert-card')) {
@@ -1001,24 +1209,14 @@ export default function App() {
         >
           {items.length === 0 ? (
             <div className="empty-studio">
-              {!historyOpen && (
-                <button
-                  type="button"
-                  className="soft-button floating-history-btn"
-                  onClick={() => setHistoryOpen(true)}
-                >
-                  <Icon name="history" size={15} /> History
-                </button>
-              )}
-
               <div className="drop-hero">
                 <div className="drop-icon-ring">
                   <Icon name="upload" size={24} />
                 </div>
-                <h1>Drop PDFs, Images, or Folders</h1>
+                <h1>Drop Unlimited PDFs, Images, or Folders</h1>
                 <p>
-                  Process documents locally with zero uploads. Reorder pages, convert formats,
-                  compress to exact KB/MB targets, split ranges, and run OCR.
+                  No file-count limits and no single-PDF lockouts—load as many PDFs and images together
+                  as your machine can handle. Reorder pages, convert formats, compress, split, and run OCR.
                 </p>
                 <div className="format-pills-row">
                   {['PDF', 'JPG', 'PNG', 'WebP', 'BMP', 'TIFF'].map((f) => (
@@ -1082,21 +1280,12 @@ export default function App() {
           ) : (
             <>
               <div className="canvas-toolbar">
-                {!historyOpen && (
-                  <button
-                    type="button"
-                    className="soft-button"
-                    onClick={() => setHistoryOpen(true)}
-                  >
-                    <Icon name="history" size={16} /> History
-                  </button>
-                )}
                 <div>
                   <h1>{activeSessionName}</h1>
                   <span>
                     {items.length} card{items.length === 1 ? '' : 's'} <i>·</i>{' '}
                     {totalUniqueFiles} source file{totalUniqueFiles === 1 ? '' : 's'} <i>·</i>{' '}
-                    Drag cards to reorder
+                    Drag cards to reorder · All tools unlocked
                   </span>
                 </div>
                 <div className="view-actions">
@@ -1106,6 +1295,13 @@ export default function App() {
                     onClick={() => void handleBrowseClick('files')}
                   >
                     <Icon name="plus" size={16} /> Add files
+                  </button>
+                  <button
+                    type="button"
+                    className="soft-button"
+                    onClick={() => void handleBrowseClick('folder')}
+                  >
+                    <Icon name="folder" size={15} /> Add folder
                   </button>
                   <div className="view-toggle">
                     <button
@@ -1132,6 +1328,7 @@ export default function App() {
                     onClick={() => {
                       setItems([]);
                       setUndoItem(null);
+                      setSessionMenuOpen(false);
                       clearWebSources();
                     }}
                   >
@@ -1200,9 +1397,11 @@ export default function App() {
                       <img src={item.thumbnailUrl} alt={item.pageLabel} loading="lazy" />
                     </div>
                     <div className="page-meta">
-                      <span>
+                      <span title={`${item.fileName} (${item.pageLabel})`}>
                         <b>{(idx + 1).toString().padStart(2, '0')}</b>
-                        {item.pageLabel}
+                        {totalUniqueFiles > 1 && item.kind === 'pdf'
+                          ? `${getFileStem(item.fileName)} · P${item.pageIndex + 1}`
+                          : item.pageLabel}
                       </span>
                       <span className="kind-mini">{item.kind.toUpperCase()}</span>
                     </div>
@@ -1274,74 +1473,90 @@ export default function App() {
           </div>
 
           <div className="tools six-tools">
-            {TOOL_ITEMS.map((t) => {
-              const enabled = isToolAvailable(t.id);
-              return (
-                <button
-                  type="button"
-                  key={t.id}
-                  disabled={!enabled}
-                  className={toolMode === t.id ? 'active' : ''}
-                  onClick={() => setToolMode(t.id)}
-                >
-                  <Icon name={t.icon} size={17} />
-                  <span>{t.label}</span>
-                  {t.badge && <small>{t.badge}</small>}
-                </button>
-              );
-            })}
+            {TOOL_ITEMS.map((t) => (
+              <button
+                type="button"
+                key={t.id}
+                className={toolMode === t.id ? 'active' : ''}
+                onClick={() => setToolMode(t.id)}
+              >
+                <Icon name={t.icon} size={17} />
+                <span>{t.label}</span>
+                {t.badge && <small>{t.badge}</small>}
+              </button>
+            ))}
           </div>
 
           {(toolMode === 'pdf_to_image' || toolMode === 'batch_convert') && (
-            <div className="form-section">
-              <label>Image format</label>
-              <div
-                className="format-options"
-                style={{
-                  gridTemplateColumns:
-                    toolMode === 'batch_convert' ? 'repeat(5, 1fr)' : 'repeat(3, 1fr)',
-                }}
-              >
-                {(toolMode === 'batch_convert'
-                  ? (['JPG', 'PNG', 'WEBP', 'BMP', 'TIFF'] as ImageOutputFormat[])
-                  : (['JPG', 'PNG', 'WEBP'] as ImageOutputFormat[])
-                ).map((fmt) => (
-                  <button
-                    type="button"
-                    key={fmt}
-                    className={imageFormat === fmt ? 'active' : ''}
-                    onClick={() => setImageFormat(fmt)}
-                  >
-                    {fmt}
-                  </button>
-                ))}
+            <>
+              <div className="form-section">
+                <label>
+                  Image format <span>All 5 formats</span>
+                </label>
+                <div
+                  className="format-options"
+                  style={{ gridTemplateColumns: 'repeat(5, 1fr)' }}
+                >
+                  {ALL_IMAGE_FORMATS.map((fmt) => (
+                    <button
+                      type="button"
+                      key={fmt}
+                      className={imageFormat === fmt ? 'active' : ''}
+                      onClick={() => setImageFormat(fmt)}
+                    >
+                      {fmt}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
+
+              <div className="form-section">
+                <label>
+                  Resolution <span>{dpiOption === '300' ? 'Best for print' : 'Custom / Web'}</span>
+                </label>
+                <div className="select-control">
+                  <div>
+                    <b>{dpiOption} DPI</b>
+                    <small>
+                      {dpiOption === '72'
+                        ? 'Fast screen preview'
+                        : dpiOption === '300'
+                          ? 'High quality · Print ready'
+                          : 'Crisp archival render'}
+                    </small>
+                  </div>
+                  <select value={dpiOption} onChange={(e) => setDpiOption(e.target.value)}>
+                    <option value="72">72 DPI (Screen)</option>
+                    <option value="150">150 DPI (Balanced)</option>
+                    <option value="300">300 DPI (Print)</option>
+                    <option value="600">600 DPI (Ultra)</option>
+                  </select>
+                  <Icon name="chevron" size={15} />
+                </div>
+              </div>
+            </>
           )}
 
-          {toolMode === 'pdf_to_image' && (
+          {toolMode === 'image_to_pdf' && (
             <div className="form-section">
               <label>
-                Resolution <span>{dpiOption === '300' ? 'Best for print' : 'Custom / Web'}</span>
+                PDF output mode <span>{activeTargets.length} item{activeTargets.length === 1 ? '' : 's'}</span>
               </label>
-              <div className="select-control">
-                <div>
-                  <b>{dpiOption} DPI</b>
-                  <small>
-                    {dpiOption === '72'
-                      ? 'Fast screen preview'
-                      : dpiOption === '300'
-                        ? 'High quality · Print ready'
-                        : 'Crisp archival render'}
-                  </small>
-                </div>
-                <select value={dpiOption} onChange={(e) => setDpiOption(e.target.value)}>
-                  <option value="72">72 DPI (Screen)</option>
-                  <option value="150">150 DPI (Balanced)</option>
-                  <option value="300">300 DPI (Print)</option>
-                  <option value="600">600 DPI (Ultra)</option>
-                </select>
-                <Icon name="chevron" size={15} />
+              <div className="split-mode-toggle" style={{ marginBottom: 0 }}>
+                <button
+                  type="button"
+                  className={pdfExportMode === 'combined' ? 'active' : ''}
+                  onClick={() => setPdfExportMode('combined')}
+                >
+                  Single Combined PDF
+                </button>
+                <button
+                  type="button"
+                  className={pdfExportMode === 'separate' ? 'active' : ''}
+                  onClick={() => setPdfExportMode('separate')}
+                >
+                  Separate PDFs
+                </button>
               </div>
             </div>
           )}
@@ -1349,7 +1564,7 @@ export default function App() {
           {toolMode === 'split' && (
             <div className="form-section">
               <label>
-                Page ranges <span>{items.length} total</span>
+                Page ranges <span>{items.length || 1} total</span>
               </label>
               <div className="split-mode-toggle">
                 <button
@@ -1367,6 +1582,22 @@ export default function App() {
                   Individual files
                 </button>
               </div>
+
+              <div className="split-quick-row">
+                <button type="button" onClick={applySelectedCardsToSplitRanges}>
+                  Use Selected ({selectedItems.length})
+                </button>
+                <button type="button" onClick={() => applyChunkSplitRanges(1)}>
+                  Every 1p
+                </button>
+                <button type="button" onClick={() => applyChunkSplitRanges(2)}>
+                  Every 2p
+                </button>
+                <button type="button" onClick={() => applyChunkSplitRanges(5)}>
+                  Every 5p
+                </button>
+              </div>
+
               <div className="range-list">
                 {splitRanges.map((row, idx) => (
                   <div className="range-row" key={row.id}>
@@ -1430,7 +1661,7 @@ export default function App() {
               <label>
                 OCR output <span>Watermark excluded</span>
               </label>
-              <div className="split-mode-toggle">
+              <div className="split-mode-toggle" style={{ marginBottom: 0 }}>
                 <button
                   type="button"
                   className={ocrMode === 'searchable_pdf' ? 'active' : ''}
@@ -1517,7 +1748,7 @@ export default function App() {
                   style={{ width: '100%', justifyContent: 'center', marginTop: 10 }}
                   onClick={() => void handleDirectCompress()}
                 >
-                  <Icon name="compress" size={14} /> Compress &amp; Save directly
+                  <Icon name="compress" size={14} /> Compress &amp; Save ({activeTargets.length})
                 </button>
               </>
             )}
@@ -1567,7 +1798,7 @@ export default function App() {
           <div className="export-area">
             <div className="export-summary">
               <span>
-                {items.length} card{items.length === 1 ? '' : 's'} ·{' '}
+                {activeTargets.length} of {items.length} card{items.length === 1 ? '' : 's'} ·{' '}
                 {toolMode === 'pdf_to_image' || toolMode === 'batch_convert'
                   ? imageFormat
                   : toolMode === 'ocr' && ocrMode === 'text_file'

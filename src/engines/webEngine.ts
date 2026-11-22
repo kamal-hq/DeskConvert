@@ -36,6 +36,10 @@ export function getWebSource(sourceId: string): LoadedSource | undefined {
   return sourceStore.get(sourceId);
 }
 
+export function removeWebSource(sourceId: string): void {
+  sourceStore.delete(sourceId);
+}
+
 export function clearWebSources(): void {
   sourceStore.clear();
 }
@@ -84,6 +88,15 @@ async function imageBytesToCanvas(bytes: Uint8Array, mimeHint = 'image/png'): Pr
   ctx.drawImage(bitmap, 0, 0);
   bitmap.close();
   return canvas;
+}
+
+async function renderItemToCanvas(item: StoryboardItem, dpi = 300): Promise<HTMLCanvasElement> {
+  const src = sourceStore.get(item.sourceId);
+  if (!src) throw new Error(`Source data missing for ${item.fileName}`);
+  if (src.kind === 'pdf') {
+    return renderPdfPageToCanvas(src.bytes, item.pageIndex, dpi);
+  }
+  return imageBytesToCanvas(src.bytes);
 }
 
 function drawCanvasWatermark(canvas: HTMLCanvasElement): void {
@@ -152,7 +165,6 @@ function encodeCanvasToTiff(canvas: HTMLCanvasElement): Blob {
   const view = new DataView(buf);
   const out = new Uint8Array(buf);
 
-  // Little-endian TIFF header
   out[0] = 0x49;
   out[1] = 0x49;
   view.setUint16(2, 42, true);
@@ -165,7 +177,6 @@ function encodeCanvasToTiff(canvas: HTMLCanvasElement): Blob {
     out[p++] = data[i + 2];
   }
 
-  // BitsPerSample: 8, 8, 8
   view.setUint16(bpsOffset, 8, true);
   view.setUint16(bpsOffset + 2, 8, true);
   view.setUint16(bpsOffset + 4, 8, true);
@@ -183,13 +194,13 @@ function encodeCanvasToTiff(canvas: HTMLCanvasElement): Blob {
   writeTag(256, 4, 1, width);
   writeTag(257, 4, 1, height);
   writeTag(258, 3, 3, bpsOffset);
-  writeTag(259, 3, 1, 1); // Uncompressed
-  writeTag(262, 3, 1, 2); // RGB
+  writeTag(259, 3, 1, 1);
+  writeTag(262, 3, 1, 2);
   writeTag(273, 4, 1, stripOffset);
-  writeTag(277, 3, 1, 3); // SamplesPerPixel
+  writeTag(277, 3, 1, 3);
   writeTag(278, 4, 1, height);
   writeTag(279, 4, 1, rgbSize);
-  writeTag(284, 3, 1, 1); // PlanarConfig
+  writeTag(284, 3, 1, 1);
   view.setUint32(pos, 0, true);
 
   return new Blob([buf], { type: 'image/tiff' });
@@ -214,7 +225,6 @@ async function canvasToBlob(
   };
   const { mime, ext } = map[format];
 
-  // Flatten alpha onto white for JPEG
   let targetCanvas = canvas;
   if (format === 'JPG') {
     const flat = document.createElement('canvas');
@@ -237,6 +247,49 @@ async function canvasToBlob(
     );
   });
   return { blob, ext, mime };
+}
+
+async function compressCanvasToTarget(
+  canvas: HTMLCanvasElement,
+  format: ImageOutputFormat,
+  targetBytes: number | null
+): Promise<{ blob: Blob; ext: string; mime: string }> {
+  if (!targetBytes || targetBytes <= 0 || format === 'BMP' || format === 'TIFF') {
+    return canvasToBlob(canvas, format, 0.92);
+  }
+
+  if (format === 'JPG' || format === 'WEBP') {
+    let low = 5;
+    let high = 95;
+    let best: { blob: Blob; ext: string; mime: string } | null = null;
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
+      const res = await canvasToBlob(canvas, format, mid / 100);
+      if (res.blob.size <= targetBytes) {
+        best = res;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+    return best ?? canvasToBlob(canvas, format, 0.08);
+  }
+
+  // PNG: try original, then progressive downscale if targetBytes is strict
+  const base = await canvasToBlob(canvas, 'PNG');
+  if (base.blob.size <= targetBytes) return base;
+  let best = base;
+  for (const scale of [0.85, 0.7, 0.55, 0.4]) {
+    const scaled = document.createElement('canvas');
+    scaled.width = Math.max(32, Math.round(canvas.width * scale));
+    scaled.height = Math.max(32, Math.round(canvas.height * scale));
+    const sctx = scaled.getContext('2d');
+    sctx?.drawImage(canvas, 0, 0, scaled.width, scaled.height);
+    const cand = await canvasToBlob(scaled, 'PNG');
+    best = cand;
+    if (cand.blob.size <= targetBytes) break;
+  }
+  return best;
 }
 
 async function applyPdfWatermarkAndMetadata(
@@ -385,13 +438,7 @@ export async function ingestWebFiles(files: File[]): Promise<{
 }
 
 export async function renderWebFullResPreview(item: StoryboardItem): Promise<string> {
-  const src = sourceStore.get(item.sourceId);
-  if (!src) return item.thumbnailUrl;
-  if (src.kind === 'pdf') {
-    const canvas = await renderPdfPageToCanvas(src.bytes, item.pageIndex, 200);
-    return canvas.toDataURL('image/png');
-  }
-  const canvas = await imageBytesToCanvas(src.bytes);
+  const canvas = await renderItemToCanvas(item, 200);
   return canvas.toDataURL('image/png');
 }
 
@@ -406,7 +453,6 @@ export async function buildWorkingPdfBytes(
   const outDoc = await PDFDocument.create();
   const loadedPdfs = new Map<string, PDFDocument>();
 
-  // Compute smart median reference width for images (mirrors Python core/pdf_engine.py)
   const imageWidths: number[] = [];
   for (const item of items) {
     if (item.kind === 'image') {
@@ -468,30 +514,92 @@ export async function buildWorkingPdfBytes(
   return applyPdfWatermarkAndMetadata(outDoc, watermarkEnabled, metadataAction);
 }
 
+export async function exportWebSeparatePdfs(
+  items: StoryboardItem[],
+  watermarkEnabled: boolean,
+  metadataAction: MetadataAction,
+  compressionBytes: number | null,
+  onProgress?: (pct: number, msg: string) => void
+): Promise<{ fileName: string; blob: Blob; mimeType: string }> {
+  const selected = items.filter((i) => i.selected);
+  const targets = selected.length > 0 ? selected : items;
+  if (targets.length === 0) throw new Error('No items to convert.');
+
+  if (targets.length === 1) {
+    if (compressionBytes && compressionBytes > 0) {
+      return compressWebTarget(targets, compressionBytes, watermarkEnabled, metadataAction, onProgress);
+    }
+    const pdfBytes = await buildWorkingPdfBytes(targets, watermarkEnabled, metadataAction, onProgress);
+    const stem = getFileStem(targets[0].fileName);
+    return {
+      fileName: `${stem}_converted.pdf`,
+      blob: new Blob([pdfBytes.slice()], { type: 'application/pdf' }),
+      mimeType: 'application/pdf',
+    };
+  }
+
+  const zip = new JSZip();
+  const usedNames = new Set<string>();
+  for (let i = 0; i < targets.length; i++) {
+    const item = targets[i];
+    onProgress?.(Math.round(((i + 1) / targets.length) * 92), `Creating PDF ${i + 1} of ${targets.length}…`);
+    let bytes: Uint8Array;
+    if (compressionBytes && compressionBytes > 0) {
+      const comp = await compressWebTarget([item], compressionBytes, watermarkEnabled, metadataAction);
+      bytes = new Uint8Array(await comp.blob.arrayBuffer());
+    } else {
+      bytes = await buildWorkingPdfBytes([item], watermarkEnabled, metadataAction);
+    }
+    const stem = getFileStem(item.fileName);
+    const baseName = item.kind === 'pdf' ? `${stem}_page${item.pageIndex + 1}` : stem;
+    let candidate = `${baseName}.pdf`;
+    let c = 1;
+    while (usedNames.has(candidate)) {
+      candidate = `${baseName}_${c++}.pdf`;
+    }
+    usedNames.add(candidate);
+    zip.file(candidate, bytes);
+  }
+  const zipBlob = await zip.generateAsync({ type: 'blob' });
+  return {
+    fileName: `deskconvert_${targets.length}_pdfs.zip`,
+    blob: zipBlob,
+    mimeType: 'application/zip',
+  };
+}
+
 export async function exportWebPdfToImages(
   items: StoryboardItem[],
   format: ImageOutputFormat,
   dpi: number,
   watermarkEnabled: boolean,
+  compressionBytes: number | null,
   onProgress?: (pct: number, msg: string) => void
 ): Promise<{ fileName: string; blob: Blob; mimeType: string }> {
-  const pdfItems = items.filter((i) => i.kind === 'pdf');
-  if (pdfItems.length === 0) throw new Error('Load a PDF file to export pages as images.');
+  if (items.length === 0) throw new Error('Load at least one file to export images.');
 
-  const selected = pdfItems.filter((i) => i.selected);
-  const targets = selected.length > 0 ? selected : pdfItems;
-  const stem = getFileStem(targets[0].fileName);
+  const selected = items.filter((i) => i.selected);
+  const targets = selected.length > 0 ? selected : items;
+  const firstStem = getFileStem(targets[0].fileName);
 
   const outputs: Array<{ name: string; blob: Blob; mime: string }> = [];
+  const usedNames = new Set<string>();
+
   for (let i = 0; i < targets.length; i++) {
     const item = targets[i];
-    const src = sourceStore.get(item.sourceId);
-    if (!src) continue;
-    onProgress?.(Math.round(((i + 1) / targets.length) * 90), `Rendering page ${i + 1} of ${targets.length}…`);
-    const canvas = await renderPdfPageToCanvas(src.bytes, item.pageIndex, dpi);
+    onProgress?.(Math.round(((i + 1) / targets.length) * 90), `Rendering item ${i + 1} of ${targets.length}…`);
+    const canvas = await renderItemToCanvas(item, dpi);
     if (watermarkEnabled) drawCanvasWatermark(canvas);
-    const { blob, ext, mime } = await canvasToBlob(canvas, format, 0.92);
-    outputs.push({ name: `${stem}_page${item.pageIndex + 1}.${ext}`, blob, mime });
+    const { blob, ext, mime } = await compressCanvasToTarget(canvas, format, compressionBytes);
+    const stem = getFileStem(item.fileName);
+    const base = item.kind === 'pdf' ? `${stem}_page${item.pageIndex + 1}` : stem;
+    let candidate = `${base}.${ext}`;
+    let c = 1;
+    while (usedNames.has(candidate)) {
+      candidate = `${base}_${c++}.${ext}`;
+    }
+    usedNames.add(candidate);
+    outputs.push({ name: candidate, blob, mime });
   }
 
   if (outputs.length === 1) {
@@ -502,7 +610,7 @@ export async function exportWebPdfToImages(
   const zip = new JSZip();
   outputs.forEach((o) => zip.file(o.name, o.blob));
   const zipBlob = await zip.generateAsync({ type: 'blob' });
-  return { fileName: `${stem}_pages_${dpi}dpi.zip`, blob: zipBlob, mimeType: 'application/zip' };
+  return { fileName: `${firstStem}_images_${dpi}dpi.zip`, blob: zipBlob, mimeType: 'application/zip' };
 }
 
 export async function exportWebSplitPdf(
@@ -554,41 +662,69 @@ export async function exportWebSplitPdf(
 export async function exportWebBatchImages(
   items: StoryboardItem[],
   format: ImageOutputFormat,
+  dpi: number,
   watermarkEnabled: boolean,
+  compressionBytes: number | null,
   onProgress?: (pct: number, msg: string) => void
 ): Promise<{ fileName: string; blob: Blob; mimeType: string }> {
-  const imageItems = items.filter((i) => i.kind === 'image');
-  if (imageItems.length === 0) throw new Error('Load at least one image for batch conversion.');
+  // Universal batch convert: converts ALL selected/loaded items (both PDF pages and images!)
+  return exportWebPdfToImages(items, format, dpi, watermarkEnabled, compressionBytes, onProgress);
+}
 
-  const results: Array<{ name: string; blob: Blob; mime: string }> = [];
-  const usedNames = new Set<string>();
+async function compressSinglePdfGroup(
+  groupItems: StoryboardItem[],
+  targetBytes: number,
+  watermarkEnabled: boolean,
+  metadataAction: MetadataAction,
+  onProgress?: (pct: number, msg: string) => void
+): Promise<Uint8Array> {
+  const baseBytes = await buildWorkingPdfBytes(groupItems, watermarkEnabled, metadataAction, onProgress);
+  if (baseBytes.length <= targetBytes) return baseBytes;
 
-  for (let i = 0; i < imageItems.length; i++) {
-    const item = imageItems[i];
-    const src = sourceStore.get(item.sourceId);
-    if (!src) continue;
-    onProgress?.(Math.round(((i + 1) / imageItems.length) * 90), `Converting ${item.fileName}…`);
-    const canvas = await imageBytesToCanvas(src.bytes);
-    if (watermarkEnabled) drawCanvasWatermark(canvas);
-    const { blob, ext, mime } = await canvasToBlob(canvas, format, 0.92);
-    const stem = getFileStem(item.fileName);
-    let candidate = `${stem}.${ext}`;
-    let counter = 1;
-    while (usedNames.has(candidate)) {
-      candidate = `${stem}_${counter++}.${ext}`;
+  const attempts: Array<[number, number]> = [
+    [144, 0.78],
+    [110, 0.65],
+    [90, 0.52],
+    [72, 0.4],
+    [72, 0.28],
+  ];
+  let bestBytes = baseBytes;
+  const loadedPdf = await pdfjsLib.getDocument({ data: baseBytes.slice() }).promise;
+  try {
+    for (let idx = 0; idx < attempts.length; idx++) {
+      const [dpi, qual] = attempts[idx];
+      onProgress?.(35 + idx * 12, `Targeting size (${dpi} DPI)…`);
+      const candDoc = await PDFDocument.create();
+      for (let p = 1; p <= loadedPdf.numPages; p++) {
+        const page = await loadedPdf.getPage(p);
+        const vp = page.getViewport({ scale: dpi / 72 });
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(vp.width));
+        canvas.height = Math.max(1, Math.round(vp.height));
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          await page.render({ canvasContext: ctx, viewport: vp }).promise;
+        }
+        const { blob } = await canvasToBlob(canvas, 'JPG', qual);
+        const jpgBytes = new Uint8Array(await blob.arrayBuffer());
+        const img = await candDoc.embedJpg(jpgBytes);
+        const origVp = page.getViewport({ scale: 1 });
+        const outPage = candDoc.addPage([origVp.width, origVp.height]);
+        outPage.drawImage(img, { x: 0, y: 0, width: origVp.width, height: origVp.height });
+      }
+      const candBytes = await applyPdfWatermarkAndMetadata(candDoc, false, metadataAction);
+      if (candBytes.length < bestBytes.length) bestBytes = candBytes;
+      if (candBytes.length <= targetBytes) {
+        bestBytes = candBytes;
+        break;
+      }
     }
-    usedNames.add(candidate);
-    results.push({ name: candidate, blob, mime });
+  } finally {
+    await loadedPdf.destroy();
   }
-
-  if (results.length === 1) {
-    return { fileName: results[0].name, blob: results[0].blob, mimeType: results[0].mime };
-  }
-
-  const zip = new JSZip();
-  results.forEach((r) => zip.file(r.name, r.blob));
-  const zipBlob = await zip.generateAsync({ type: 'blob' });
-  return { fileName: `deskconvert_batch_${format.toLowerCase()}.zip`, blob: zipBlob, mimeType: 'application/zip' };
+  return bestBytes;
 }
 
 export async function compressWebTarget(
@@ -599,102 +735,60 @@ export async function compressWebTarget(
   onProgress?: (pct: number, msg: string) => void
 ): Promise<{ fileName: string; blob: Blob; mimeType: string }> {
   if (items.length === 0) throw new Error('No file loaded to compress.');
-  const hasPdf = items.some((i) => i.kind === 'pdf');
-  const stem = getFileStem(items[0].fileName);
+  const selected = items.filter((i) => i.selected);
+  const targets = selected.length > 0 ? selected : items;
 
-  if (hasPdf) {
-    onProgress?.(20, 'Optimizing PDF object streams…');
-    const baseBytes = await buildWorkingPdfBytes(items, watermarkEnabled, metadataAction, onProgress);
-    if (baseBytes.length <= targetBytes) {
-      return {
-        fileName: `${stem}_compressed.pdf`,
-        blob: new Blob([baseBytes.slice()], { type: 'application/pdf' }),
-        mimeType: 'application/pdf',
-      };
-    }
+  const hasPdf = targets.some((i) => i.kind === 'pdf');
+  const hasImage = targets.some((i) => i.kind === 'image');
+  const firstStem = getFileStem(targets[0].fileName);
 
-    // Adaptive JPEG rasterization ladder until under targetBytes
-    const attempts: Array<[number, number]> = [
-      [144, 0.78],
-      [110, 0.65],
-      [90, 0.52],
-      [72, 0.4],
-      [72, 0.28],
-    ];
-    let bestBytes = baseBytes;
-    const loadedPdf = await pdfjsLib.getDocument({ data: baseBytes.slice() }).promise;
-    try {
-      for (let idx = 0; idx < attempts.length; idx++) {
-        const [dpi, qual] = attempts[idx];
-        onProgress?.(35 + idx * 12, `Targeting size (${dpi} DPI)…`);
-        const candDoc = await PDFDocument.create();
-        for (let p = 1; p <= loadedPdf.numPages; p++) {
-          const page = await loadedPdf.getPage(p);
-          const vp = page.getViewport({ scale: dpi / 72 });
-          const canvas = document.createElement('canvas');
-          canvas.width = Math.max(1, Math.round(vp.width));
-          canvas.height = Math.max(1, Math.round(vp.height));
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            await page.render({ canvasContext: ctx, viewport: vp }).promise;
-          }
-          const { blob } = await canvasToBlob(canvas, 'JPG', qual);
-          const jpgBytes = new Uint8Array(await blob.arrayBuffer());
-          const img = await candDoc.embedJpg(jpgBytes);
-          const origVp = page.getViewport({ scale: 1 });
-          const outPage = candDoc.addPage([origVp.width, origVp.height]);
-          outPage.drawImage(img, { x: 0, y: 0, width: origVp.width, height: origVp.height });
-        }
-        const candBytes = await applyPdfWatermarkAndMetadata(candDoc, false, metadataAction);
-        if (candBytes.length < bestBytes.length) bestBytes = candBytes;
-        if (candBytes.length <= targetBytes) {
-          bestBytes = candBytes;
-          break;
-        }
+  // If all targets are images (1 or many), compress each image individually
+  if (hasImage && !hasPdf) {
+    const outputs: Array<{ name: string; blob: Blob; mime: string }> = [];
+    const usedNames = new Set<string>();
+    for (let i = 0; i < targets.length; i++) {
+      const item = targets[i];
+      onProgress?.(Math.round(((i + 1) / targets.length) * 90), `Compressing ${item.fileName}…`);
+      const canvas = await renderItemToCanvas(item, 300);
+      if (watermarkEnabled) drawCanvasWatermark(canvas);
+      const isWebp = item.fileName.toLowerCase().endsWith('.webp');
+      const isPng = item.fileName.toLowerCase().endsWith('.png');
+      const fmt: ImageOutputFormat = isWebp ? 'WEBP' : isPng ? 'PNG' : 'JPG';
+      const { blob, ext, mime } = await compressCanvasToTarget(canvas, fmt, targetBytes);
+      const stem = getFileStem(item.fileName);
+      let candidate = `${stem}_compressed.${ext}`;
+      let c = 1;
+      while (usedNames.has(candidate)) {
+        candidate = `${stem}_compressed_${c++}.${ext}`;
       }
-    } finally {
-      await loadedPdf.destroy();
+      usedNames.add(candidate);
+      outputs.push({ name: candidate, blob, mime });
     }
+    if (outputs.length === 1) {
+      return { fileName: outputs[0].name, blob: outputs[0].blob, mimeType: outputs[0].mime };
+    }
+    const zip = new JSZip();
+    outputs.forEach((o) => zip.file(o.name, o.blob));
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
     return {
-      fileName: `${stem}_compressed.pdf`,
-      blob: new Blob([bestBytes.slice()], { type: 'application/pdf' }),
-      mimeType: 'application/pdf',
+      fileName: `${firstStem}_compressed_${outputs.length}_files.zip`,
+      blob: zipBlob,
+      mimeType: 'application/zip',
     };
   }
 
-  // Image compression (binary search quality + scale fallback)
-  const src = sourceStore.get(items[0].sourceId);
-  if (!src) throw new Error('Source image unavailable.');
-  const canvas = await imageBytesToCanvas(src.bytes);
-  if (watermarkEnabled) drawCanvasWatermark(canvas);
-
-  const isWebp = src.fileName.toLowerCase().endsWith('.webp');
-  const fmt: ImageOutputFormat = isWebp ? 'WEBP' : 'JPG';
-  let low = 5;
-  let high = 95;
-  let bestBlob: Blob | null = null;
-  onProgress?.(45, 'Binary-searching optimal image quality…');
-
-  while (low <= high) {
-    const mid = Math.floor((low + high) / 2);
-    const { blob } = await canvasToBlob(canvas, fmt, mid / 100);
-    if (blob.size <= targetBytes) {
-      bestBlob = blob;
-      low = mid + 1;
-    } else {
-      high = mid - 1;
-    }
-  }
-  if (!bestBlob) {
-    bestBlob = (await canvasToBlob(canvas, fmt, 0.08)).blob;
-  }
-  const ext = fmt === 'WEBP' ? 'webp' : 'jpg';
+  // PDF or mixed storyboard compression
+  const pdfBytes = await compressSinglePdfGroup(
+    targets,
+    targetBytes,
+    watermarkEnabled,
+    metadataAction,
+    onProgress
+  );
   return {
-    fileName: `${stem}_compressed.${ext}`,
-    blob: bestBlob,
-    mimeType: fmt === 'WEBP' ? 'image/webp' : 'image/jpeg',
+    fileName: `${firstStem}_compressed.pdf`,
+    blob: new Blob([pdfBytes.slice()], { type: 'application/pdf' }),
+    mimeType: 'application/pdf',
   };
 }
 
@@ -708,7 +802,9 @@ export async function runWebOcr(
   onProgress?: (pct: number, msg: string) => void
 ): Promise<{ fileName: string; blob: Blob; mimeType: string }> {
   if (items.length === 0) throw new Error('Load a PDF or image to run OCR.');
-  const stem = getFileStem(items[0].fileName);
+  const selected = items.filter((i) => i.selected);
+  const targets = selected.length > 0 ? selected : items;
+  const stem = getFileStem(targets[0].fileName);
 
   onProgress?.(5, 'Initializing local Tesseract OCR engine…');
   const worker = await createWorker('eng');
@@ -718,23 +814,16 @@ export async function runWebOcr(
     const searchableDoc = mode === 'searchable_pdf' ? await PDFDocument.create() : null;
     const font = searchableDoc ? await searchableDoc.embedFont(StandardFonts.Helvetica) : null;
 
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      const src = sourceStore.get(item.sourceId);
-      if (!src) continue;
-
+    for (let i = 0; i < targets.length; i++) {
+      const item = targets[i];
       onProgress?.(
-        Math.round(10 + ((i + 0.5) / items.length) * 85),
-        `Recognizing text on page ${i + 1} of ${items.length}…`
+        Math.round(10 + ((i + 0.5) / targets.length) * 85),
+        `Recognizing text on item ${i + 1} of ${targets.length} (${item.fileName})…`
       );
 
-      const canvas =
-        src.kind === 'pdf'
-          ? await renderPdfPageToCanvas(src.bytes, item.pageIndex, 200)
-          : await imageBytesToCanvas(src.bytes);
-
+      const canvas = await renderItemToCanvas(item, 200);
       const result = await worker.recognize(canvas);
-      pageTexts.push(`--- Page ${i + 1} ---\n${result.data.text || ''}\n`);
+      pageTexts.push(`--- Page ${i + 1} (${item.fileName}) ---\n${result.data.text || ''}\n`);
 
       if (searchableDoc && font) {
         const { blob } = await canvasToBlob(canvas, 'JPG', 0.88);

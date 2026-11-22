@@ -7,7 +7,7 @@ from .settings import SettingsManager
 class HistoryManager:
     def __init__(self, settings: Optional[SettingsManager] = None):
         self.settings = settings or SettingsManager()
-        self.max_history = 10
+        self.max_history = 100
 
     def add_entry(self, filepath: str) -> None:
         history = self.settings.get_history()

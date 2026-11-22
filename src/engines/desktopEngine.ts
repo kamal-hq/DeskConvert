@@ -43,6 +43,7 @@ export interface DesktopBridgeApi {
     watermarkEnabled: boolean;
     metadataAction: string;
     compressionBytes: number | null;
+    separateFiles?: boolean;
   }): Promise<ExportResult | null>;
   merge_files(payload: {
     items: Array<{ sourceId: string; pageIndex: number }>;
@@ -60,6 +61,7 @@ export interface DesktopBridgeApi {
   batch_convert_images(payload: {
     items: Array<{ sourceId: string; pageIndex: number }>;
     format: ImageOutputFormat;
+    dpi?: number;
     watermarkEnabled: boolean;
     metadataAction: string;
     compressionBytes: number | null;

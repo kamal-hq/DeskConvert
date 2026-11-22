@@ -246,15 +246,24 @@ class DeskConvertBridge:
         working_pdf = self._materialize_working_pdf(ordered)
         first_sid = payload["items"][0]["sourceId"]
         stem = os.path.splitext(os.path.basename(self._id_to_original.get(first_sid, "document.pdf")))[0]
+        wm = bool(payload.get("watermarkEnabled", True))
+        meta = str(payload.get("metadataAction", "keep"))
+        compression_bytes = payload.get("compressionBytes")
         paths = PdfEngine.pdf_to_images(
             working_pdf,
             out_dir,
             stem,
             dpi=int(payload.get("dpi", 300)),
             fmt=str(payload.get("format", "jpg")).lower(),
-            watermark_enabled=bool(payload.get("watermarkEnabled", True)),
-            metadata_action=str(payload.get("metadataAction", "keep")),
+            watermark_enabled=wm,
+            metadata_action=meta,
         )
+        if compression_bytes and int(compression_bytes) > 0:
+            for p in paths:
+                if os.path.getsize(p) > int(compression_bytes):
+                    CompressionEngine.compress_image(
+                        p, p, int(compression_bytes), watermark_enabled=False, metadata_action=meta
+                    )
         if paths:
             self.history.add_entry(paths[0])
         return {
@@ -265,6 +274,36 @@ class DeskConvertBridge:
         }
 
     def export_images_to_pdf(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if payload.get("separateFiles"):
+            ordered = self._resolve_storyboard(payload["items"])
+            out_dir = self._choose_output_dir()
+            if not out_dir:
+                return None
+            wm = bool(payload.get("watermarkEnabled", True))
+            meta = str(payload.get("metadataAction", "keep"))
+            compression_bytes = payload.get("compressionBytes")
+            saved_paths: List[str] = []
+            for idx, (cached_path, page_idx) in enumerate(ordered):
+                stem = os.path.splitext(os.path.basename(cached_path))[0]
+                out_path = ExportEngine.safe_output_path(out_dir, f"{stem}_p{idx + 1}", ".pdf")
+                if compression_bytes and int(compression_bytes) > 0:
+                    temp_pdf = self._materialize_working_pdf([(cached_path, page_idx)])
+                    CompressionEngine.compress_pdf(
+                        temp_pdf, out_path, int(compression_bytes), watermark_enabled=wm, metadata_action=meta
+                    )
+                else:
+                    PdfEngine.merge_to_pdf(
+                        [(cached_path, page_idx)], out_path, watermark_enabled=wm, metadata_action=meta
+                    )
+                saved_paths.append(out_path)
+            if saved_paths:
+                self.history.add_entry(saved_paths[0])
+            return {
+                "summary": f"Exported {len(saved_paths)} separate PDF(s) to {out_dir}",
+                "outputCount": len(saved_paths),
+                "artifacts": [{"fileName": os.path.basename(p), "savedPath": p, "sizeBytes": os.path.getsize(p), "mimeType": "application/pdf"} for p in saved_paths],
+                "outputDir": out_dir,
+            }
         return self.merge_files(payload)
 
     def merge_files(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -337,9 +376,13 @@ class DeskConvertBridge:
 
     def batch_convert_images(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         ordered = self._resolve_storyboard(payload["items"])
+        has_pdf = any(Validators.is_pdf(p) for p, _ in ordered)
+        if has_pdf:
+            return self.export_pdf_to_images(payload)
+
         image_paths = [p for p, _ in ordered if Validators.is_image(p)]
         if not image_paths:
-            raise ValueError("No image files loaded for batch conversion.")
+            raise ValueError("No files loaded for batch conversion.")
 
         out_dir = self._choose_output_dir()
         if not out_dir:
