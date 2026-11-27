@@ -33,6 +33,7 @@ import {
   triggerBrowserDownload,
 } from './engines/webEngine';
 import { BrandMark, Icon, type IconName } from './components/Icons';
+import { LegalModal, type LegalTab } from './components/LegalModal';
 import { DownloadDesktopModal, PreviewModal, SettingsModal } from './components/Modals';
 import { ToastStack } from './components/Toast';
 
@@ -163,6 +164,18 @@ async function collectDroppedFiles(dataTransfer: DataTransfer): Promise<File[]> 
   return Array.from(dataTransfer.files || []);
 }
 
+function readLegalTabFromLocation(): LegalTab | null {
+  if (typeof window === 'undefined') return null;
+  const path = window.location.pathname.replace(/\/+$/, '').toLowerCase();
+  const hash = window.location.hash.replace(/^#\/?/, '').toLowerCase();
+  for (const candidate of [path.slice(1), hash]) {
+    if (candidate === 'privacy' || candidate === 'terms' || candidate === 'licenses') {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 export default function App() {
   const [desktopApi, setDesktopApi] = useState(() => getDesktopApi());
   const isDesktop = desktopApi !== null;
@@ -198,6 +211,7 @@ export default function App() {
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [downloadOpen, setDownloadOpen] = useState(false);
+  const [legalTab, setLegalTab] = useState<LegalTab | null>(readLegalTabFromLocation);
   const [mobileInspector, setMobileInspector] = useState(false);
   const [previewState, setPreviewState] = useState<{
     index: number;
@@ -251,6 +265,69 @@ export default function App() {
       return () => window.removeEventListener('pywebviewready', syncDesktop);
     }
   }, []);
+
+  const openLegalModal = useCallback(
+    (tab: LegalTab) => {
+      setLegalTab(tab);
+      if (typeof window === 'undefined') return;
+      try {
+        if (isDesktop) {
+          window.location.hash = tab;
+        } else if (window.location.pathname !== `/${tab}`) {
+          window.history.pushState(null, '', `/${tab}`);
+        }
+      } catch {
+        // ignore history errors
+      }
+    },
+    [isDesktop]
+  );
+
+  const closeLegalModal = useCallback(() => {
+    setLegalTab(null);
+    if (typeof window === 'undefined') return;
+    try {
+      if (isDesktop) {
+        if (window.location.hash) window.history.replaceState(null, '', window.location.pathname);
+      } else if (['/privacy', '/terms', '/licenses'].includes(window.location.pathname.toLowerCase())) {
+        window.history.pushState(null, '', '/');
+      }
+    } catch {
+      // ignore
+    }
+  }, [isDesktop]);
+
+  useEffect(() => {
+    const syncLegalFromUrl = () => setLegalTab(readLegalTabFromLocation());
+    window.addEventListener('popstate', syncLegalFromUrl);
+    window.addEventListener('hashchange', syncLegalFromUrl);
+    return () => {
+      window.removeEventListener('popstate', syncLegalFromUrl);
+      window.removeEventListener('hashchange', syncLegalFromUrl);
+    };
+  }, []);
+
+  const handleClearAllLocalData = useCallback(async () => {
+    if (desktopApi) {
+      try {
+        await desktopApi.clear_history();
+        const reset = await desktopApi.save_settings(DEFAULT_SETTINGS);
+        setSettings(reset);
+      } catch {
+        setSettings(DEFAULT_SETTINGS);
+      }
+    } else {
+      try {
+        localStorage.removeItem(HISTORY_STORAGE_KEY);
+        localStorage.removeItem(SETTINGS_STORAGE_KEY);
+      } catch {
+        // ignore
+      }
+      setSettings(DEFAULT_SETTINGS);
+    }
+    setHistory([]);
+    pushToast('success', 'Local data cleared', 'Recent history and saved preferences have been reset on this device.');
+  }, [desktopApi, pushToast]);
 
   const persistSettings = useCallback(
     async (next: AppSettings) => {
@@ -1218,6 +1295,37 @@ export default function App() {
             <p>
               <Icon name="lock" size={12} /> Stored on this device only
             </p>
+            <nav className="legal-footer-links" aria-label="Legal and compliance">
+              <a
+                href="/privacy"
+                onClick={(e) => {
+                  e.preventDefault();
+                  openLegalModal('privacy');
+                }}
+              >
+                Privacy
+              </a>
+              <span aria-hidden="true">·</span>
+              <a
+                href="/terms"
+                onClick={(e) => {
+                  e.preventDefault();
+                  openLegalModal('terms');
+                }}
+              >
+                Terms
+              </a>
+              <span aria-hidden="true">·</span>
+              <a
+                href="/licenses"
+                onClick={(e) => {
+                  e.preventDefault();
+                  openLegalModal('licenses');
+                }}
+              >
+                Licenses
+              </a>
+            </nav>
           </div>
         </aside>
 
@@ -1304,6 +1412,41 @@ export default function App() {
                   </button>
                 </div>
               )}
+
+              <footer className="studio-footer">
+                <span>DeskConvert v2.0 · 100% Local Processing</span>
+                <nav aria-label="Footer legal links">
+                  <a
+                    href="/privacy"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      openLegalModal('privacy');
+                    }}
+                  >
+                    Privacy Policy
+                  </a>
+                  <span aria-hidden="true">·</span>
+                  <a
+                    href="/terms"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      openLegalModal('terms');
+                    }}
+                  >
+                    Terms of Service
+                  </a>
+                  <span aria-hidden="true">·</span>
+                  <a
+                    href="/licenses"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      openLegalModal('licenses');
+                    }}
+                  >
+                    Licenses
+                  </a>
+                </nav>
+              </footer>
             </div>
           ) : (
             <>
@@ -1898,6 +2041,17 @@ export default function App() {
         <DownloadDesktopModal
           onClose={() => setDownloadOpen(false)}
           onOpenExternal={desktopApi ? (url) => void desktopApi.open_external_url(url) : undefined}
+        />
+      )}
+
+      {legalTab && (
+        <LegalModal
+          activeTab={legalTab}
+          isDesktop={isDesktop}
+          onSelectTab={openLegalModal}
+          onClearAllLocalData={() => void handleClearAllLocalData()}
+          onOpenExternal={desktopApi ? (url) => void desktopApi.open_external_url(url) : undefined}
+          onClose={closeLegalModal}
         />
       )}
 
