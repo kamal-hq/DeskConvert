@@ -171,3 +171,32 @@ def test_decompression_bomb_and_memory_safety_caps(tmp_path):
     Validators.validate_render_pixmap_size(595.0, 842.0, 600)  # Normal A4 at 600 DPI (~35 MP) passes
     with pytest.raises(ValueError, match="memory safety cap"):
         Validators.validate_render_pixmap_size(20_000.0, 20_000.0, 600)  # Malicious giant page blocked
+
+
+def test_installer_asset_checksum_verification(tmp_path):
+    from desktop.verify_installer_assets import generate_manifest, verify_assets
+
+    assets_dir = tmp_path / "installer_assets"
+    poppler_dir = assets_dir / "poppler" / "bin"
+    poppler_dir.mkdir(parents=True)
+    (assets_dir / "tesseract-installer.exe").write_bytes(b"fake-tesseract-binary")
+    (poppler_dir / "pdftoppm.exe").write_bytes(b"fake-poppler-binary")
+    manifest_path = str(tmp_path / "installer_checksums.json")
+
+    generate_manifest(str(assets_dir), manifest_path)
+    ok, errors = verify_assets(str(assets_dir), manifest_path)
+    assert ok is True
+    assert errors == []
+
+    # Tampering a single byte must fail verification
+    (assets_dir / "tesseract-installer.exe").write_bytes(b"tampered-tesseract!!")
+    ok, errors = verify_assets(str(assets_dir), manifest_path)
+    assert ok is False
+    assert any("SHA-256 MISMATCH" in e for e in errors)
+
+    # Unexpected extra file must fail verification
+    (assets_dir / "tesseract-installer.exe").write_bytes(b"fake-tesseract-binary")
+    (poppler_dir / "evil.dll").write_bytes(b"unpinned")
+    ok, errors = verify_assets(str(assets_dir), manifest_path)
+    assert ok is False
+    assert any("UNEXPECTED" in e for e in errors)

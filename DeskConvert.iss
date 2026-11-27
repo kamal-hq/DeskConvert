@@ -3,6 +3,12 @@
 #define MyAppPublisher "Muhammad Kamal"
 #define MyAppExeName "DeskConvert.exe"
 
+; Verify pinned SHA-256 hashes for bundled Tesseract & Poppler binaries before compiling
+#define VerifyExitCode Exec("python", "desktop\verify_installer_assets.py", ".", 1, 0)
+#if VerifyExitCode != 0
+  #error "Installer asset SHA-256 verification failed. Run 'python desktop/verify_installer_assets.py' to inspect mismatches."
+#endif
+
 [Setup]
 AppId={{DC2024-DESKCONVERT-MK-001}
 AppName={#MyAppName}
