@@ -323,7 +323,7 @@ export function DownloadDesktopModal({ onClose }: { onClose: () => void }) {
           <a
             href={DESKTOP_INSTALLER_URL}
             target="_blank"
-            rel="noreferrer"
+            rel="noopener noreferrer"
             className="modal-done"
             style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 0 }}
           >
@@ -333,7 +333,7 @@ export function DownloadDesktopModal({ onClose }: { onClose: () => void }) {
           <a
             href={DESKTOP_RELEASE_URL}
             target="_blank"
-            rel="noreferrer"
+            rel="noopener noreferrer"
             className="soft-button"
             style={{ textDecoration: 'none', justifyContent: 'center', height: 36 }}
           >

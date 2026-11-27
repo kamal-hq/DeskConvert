@@ -77,21 +77,49 @@ const QUICK_TOOL_CARDS: Array<{
 function loadWebSettings(): AppSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
-    if (raw) return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    if (!raw) return DEFAULT_SETTINGS;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return DEFAULT_SETTINGS;
+    }
+    const dpi = parsed.dpi === 'screen' || parsed.dpi === 'custom' ? parsed.dpi : 'print';
+    const customDpiNum = Number(parsed.customDpi);
+    return {
+      defaultOutputDirectory: typeof parsed.defaultOutputDirectory === 'string' ? parsed.defaultOutputDirectory : '',
+      quickSaveEnabled: typeof parsed.quickSaveEnabled === 'boolean' ? parsed.quickSaveEnabled : DEFAULT_SETTINGS.quickSaveEnabled,
+      watermarkEnabled: typeof parsed.watermarkEnabled === 'boolean' ? parsed.watermarkEnabled : DEFAULT_SETTINGS.watermarkEnabled,
+      metadataAction: parsed.metadataAction === 'strip' ? 'strip' : 'keep',
+      dpi,
+      customDpi: Number.isFinite(customDpiNum) ? Math.max(72, Math.min(1200, Math.round(customDpiNum))) : DEFAULT_SETTINGS.customDpi,
+      theme: parsed.theme === 'light' ? 'light' : 'dark',
+    };
   } catch {
-    // ignore storage errors
+    return DEFAULT_SETTINGS;
   }
-  return DEFAULT_SETTINGS;
 }
 
 function loadWebHistory(): HistoryEntry[] {
   try {
     const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object' && typeof entry.name === 'string')
+      .slice(0, 100)
+      .map((entry, idx) => ({
+        id: typeof entry.id === 'string' ? entry.id : `h_${idx}`,
+        name: String(entry.name).slice(0, 260),
+        path: typeof entry.path === 'string' ? entry.path.slice(0, 1024) : undefined,
+        kind: entry.kind === 'pdf' ? 'pdf' : 'image',
+        pageCount: Number.isFinite(Number(entry.pageCount)) ? Math.max(1, Math.floor(Number(entry.pageCount))) : 1,
+        sizeBytes: Number.isFinite(Number(entry.sizeBytes)) ? Math.max(0, Math.floor(Number(entry.sizeBytes))) : 0,
+        timestamp: Number.isFinite(Number(entry.timestamp)) ? Number(entry.timestamp) : Date.now(),
+        exists: typeof entry.exists === 'boolean' ? entry.exists : true,
+      }));
   } catch {
-    // ignore
+    return [];
   }
-  return [];
 }
 
 async function collectDroppedFiles(dataTransfer: DataTransfer): Promise<File[]> {
