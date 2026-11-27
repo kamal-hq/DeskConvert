@@ -1894,7 +1894,12 @@ export default function App() {
         />
       )}
 
-      {downloadOpen && <DownloadDesktopModal onClose={() => setDownloadOpen(false)} />}
+      {downloadOpen && (
+        <DownloadDesktopModal
+          onClose={() => setDownloadOpen(false)}
+          onOpenExternal={desktopApi ? (url) => void desktopApi.open_external_url(url) : undefined}
+        />
+      )}
 
       <ToastStack
         toasts={toasts}

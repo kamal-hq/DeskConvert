@@ -5,6 +5,7 @@ from PIL import Image
 from core.export import ExportEngine
 from core.metadata import keep_metadata, strip_metadata
 from core.watermark import apply_watermark
+from utils.validators import Validators
 
 
 class ImageEngine:
@@ -24,12 +25,13 @@ class ImageEngine:
         Converts single image to target_format into output_folder.
         Preserves or strips metadata and applies watermark cleanly without overwriting outputs.
         """
-        os.makedirs(output_folder, exist_ok=True)
+        safe_folder = Validators.validate_local_path(output_folder)
+        os.makedirs(safe_folder, exist_ok=True)
         filename = os.path.basename(cached_source_path)
         base, _ = os.path.splitext(filename)
-        stem = stem_override or base
+        stem = Validators.sanitize_filename_stem(stem_override or base, fallback="image")
 
-        ext = target_format.lower().lstrip(".")
+        ext = "".join(ch for ch in target_format.lower().lstrip(".") if ch.isalnum())[:8]
         pil_format = ext.upper()
         if ext in ("jpg", "jpeg"):
             ext = "jpg"
@@ -39,9 +41,11 @@ class ImageEngine:
             pil_format = "TIFF"
 
         if safe_naming:
-            out_path = ExportEngine.safe_output_path(output_folder, stem, f".{ext}")
+            out_path = ExportEngine.safe_output_path(safe_folder, stem, f".{ext}")
         else:
-            out_path = os.path.join(output_folder, f"{stem}.{ext}")
+            out_path = os.path.join(safe_folder, f"{stem}.{ext}")
+            if not Validators.is_path_within(out_path, safe_folder):
+                raise ValueError("Refused to write image outside target directory.")
 
         with Image.open(cached_source_path) as img:
             exif_bytes = img.info.get("exif") if metadata_action == "keep" else None

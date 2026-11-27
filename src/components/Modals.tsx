@@ -278,7 +278,19 @@ export function SettingsModal({
   );
 }
 
-export function DownloadDesktopModal({ onClose }: { onClose: () => void }) {
+export function DownloadDesktopModal({
+  onClose,
+  onOpenExternal,
+}: {
+  onClose: () => void;
+  onOpenExternal?: (url: string) => void;
+}) {
+  const handleExternalClick = (e: React.MouseEvent<HTMLAnchorElement>, url: string) => {
+    if (onOpenExternal) {
+      e.preventDefault();
+      onOpenExternal(url);
+    }
+  };
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <section className="settings-modal" onMouseDown={(e) => e.stopPropagation()}>
@@ -324,6 +336,7 @@ export function DownloadDesktopModal({ onClose }: { onClose: () => void }) {
             href={DESKTOP_INSTALLER_URL}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={(e) => handleExternalClick(e, DESKTOP_INSTALLER_URL)}
             className="modal-done"
             style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 0 }}
           >
@@ -334,6 +347,7 @@ export function DownloadDesktopModal({ onClose }: { onClose: () => void }) {
             href={DESKTOP_RELEASE_URL}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={(e) => handleExternalClick(e, DESKTOP_RELEASE_URL)}
             className="soft-button"
             style={{ textDecoration: 'none', justifyContent: 'center', height: 36 }}
           >
