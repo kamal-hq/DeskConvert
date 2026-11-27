@@ -102,6 +102,7 @@ Get-FileHash .\installer_output\DeskConvert_Setup.exe -Algorithm SHA256
 
 ## Author & License
 
-- **Developer**: Muhammad Kamal
+- **Developer**: Muhammad Kamal (`muhammad.kamal.hq@gmail.com`)
 - **Repository**: [kamal-hq/DeskConvert](https://github.com/kamal-hq/DeskConvert)
-- **License**: MIT
+- **Source & Web Studio License**: MIT ([LICENSE](LICENSE))
+- **Windows Desktop Binary Distribution License**: GNU AGPL-3.0 ([LICENSE-DESKTOP-AGPL-3.0.txt](LICENSE-DESKTOP-AGPL-3.0.txt), due to bundled PyMuPDF/MuPDF & Poppler; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md))

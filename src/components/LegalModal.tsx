@@ -301,7 +301,7 @@ export function LegalModal({
                 DeskConvert v2.0.0 · Source License: <b>MIT</b> · Copyright © 2026 Muhammad Kamal
               </p>
 
-              <h3>DeskConvert Source Code</h3>
+              <h3>DeskConvert Licensing</h3>
               <p>
                 Original source code in{' '}
                 <a
@@ -312,7 +312,11 @@ export function LegalModal({
                 >
                   github.com/kamal-hq/DeskConvert
                 </a>{' '}
-                is licensed under the <b>MIT License</b>.
+                is licensed under the <b>MIT License</b>. The Web Studio uses only permissive
+                libraries (MIT, Apache-2.0, SIL OFL-1.1). The compiled Windows Desktop binary
+                distribution (<code>DeskConvert_Setup.exe</code>) bundles PyMuPDF (AGPL-3.0) and
+                Poppler (GPL) and is distributed under <b>GNU AGPL-3.0</b> with Corresponding Source
+                links in <code>LICENSE-DESKTOP-AGPL-3.0.txt</code>.
               </p>
 
               <h3>Web Studio Bundled Libraries</h3>
@@ -341,8 +345,8 @@ export function LegalModal({
               <h3>Windows Desktop Bundled Components</h3>
               <ul>
                 <li>
-                  <b>PyMuPDF / MuPDF</b> — GNU Affero General Public License v3.0 (AGPL-3.0) or
-                  Artifex Commercial License
+                  <b>PyMuPDF / MuPDF</b> (1.28.2) — GNU Affero General Public License v3.0
+                  (AGPL-3.0)
                 </li>
                 <li>
                   <b>Poppler</b> (26.09.0) — GNU General Public License v2.0 / v3.0 (GPL)
@@ -351,7 +355,7 @@ export function LegalModal({
                   <b>Tesseract OCR</b> (5.5.3) — Apache License 2.0
                 </li>
                 <li>
-                  <b>Pillow</b> (10.4.0) — HPND License
+                  <b>Pillow</b> (13.0.0) — MIT-CMU License
                 </li>
                 <li>
                   <b>pywebview</b> (6.2.1) — BSD 3-Clause License; <b>Bottle</b> (0.13.4) — MIT;{' '}

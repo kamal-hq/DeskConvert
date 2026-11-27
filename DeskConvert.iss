@@ -26,6 +26,7 @@ PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64
 UninstallDisplayIcon={app}\DeskConvert.exe
 SetupIconFile=assets\icon.ico
+LicenseFile=LICENSE-DESKTOP-AGPL-3.0.txt
 MinVersion=10.0
 
 [Languages]
@@ -41,6 +42,11 @@ Name: "desktopicon"; \
 Source: "dist\DeskConvert\*"; \
   DestDir: "{app}"; \
   Flags: ignoreversion recursesubdirs createallsubdirs
+
+; License & third-party attribution notices (AGPL-3.0 desktop distribution + MIT source)
+Source: "LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "LICENSE-DESKTOP-AGPL-3.0.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Poppler binaries
 Source: "installer_assets\poppler\bin\*"; \

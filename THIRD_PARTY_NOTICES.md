@@ -2,9 +2,9 @@
 
 DeskConvert's own source code is licensed under the **MIT License** (Copyright © 2026 Muhammad Kamal; see [LICENSE](./LICENSE)).
 
-DeskConvert bundles or depends on the following third-party open-source components across its **Web Studio** (`dist_web/`) and **Windows Desktop Distribution** (`DeskConvert.exe` / `DeskConvert_Setup.exe`).
+The **Web Studio** (`dist_web/`) uses only permissive licenses (MIT, Apache-2.0, SIL OFL-1.1). Because the **Windows Desktop Distribution** (`DeskConvert.exe` and `DeskConvert_Setup.exe`) bundles **PyMuPDF / MuPDF** (AGPL-3.0) and **Poppler** (GPL-2.0/3.0), the compiled Windows Desktop distribution is distributed under the **GNU Affero General Public License v3.0 (AGPL-3.0)** — see [LICENSE-DESKTOP-AGPL-3.0.txt](./LICENSE-DESKTOP-AGPL-3.0.txt) for the Corresponding Source offer.
 
-> **Note:** This document is provided for open-source attribution and compliance transparency and does not constitute legal advice. For licensing compatibility considerations regarding copyleft components bundled in the Windows Desktop distribution (specifically PyMuPDF/MuPDF under AGPL-3.0 and Poppler under GPL), see [SECURITY_AUDIT.md](./SECURITY_AUDIT.md).
+> **Note:** This document is provided for open-source attribution and compliance transparency and does not constitute legal advice.
 
 ---
 
@@ -28,7 +28,7 @@ DeskConvert bundles or depends on the following third-party open-source componen
 - **@vitejs/plugin-react** (4.7.0) — MIT
 - **Tailwind CSS** (`tailwindcss` 4.3.5, `@tailwindcss/vite` 4.3.5) — MIT
 - **TypeScript** (`typescript` 5.9.3) — Apache-2.0
-- **Vitest** (`vitest` 3.2.7) — MIT
+- **Vitest** (`vitest` 5.1.2) — MIT
 
 ---
 
@@ -40,8 +40,8 @@ In addition to embedding the compiled Web Studio frontend (`dist_web/`), the Win
 | Component | Pinned / Bundled Version | License | Notes |
 | :--- | :--- | :--- | :--- |
 | **Python Runtime** | 3.12.10 | PSF License 2.0 | Embedded interpreter via PyInstaller |
-| **PyMuPDF & PyMuPDFb (MuPDF)** | `1.24.9` (`desktop/requirements.txt`) / `1.28.2` (local build env) | **GNU AGPL-3.0** (or Artifex Commercial License) | **Strong copyleft.** PDF parsing, rendering, merging, splitting, compression |
-| **Pillow (PIL)** | `10.4.0` | HPND *(Historical Permission Notice and Disclaimer)* | Image conversion, EXIF/metadata handling, compression, watermarking |
+| **PyMuPDF / MuPDF** | `1.28.2` | **GNU AGPL-3.0** (or Artifex Commercial License) | **Strong copyleft.** PDF parsing, rendering, merging, splitting, compression |
+| **Pillow (PIL)** | `13.0.0` | MIT-CMU | Image conversion, EXIF/metadata handling, compression, watermarking |
 | **pywebview** | `6.2.1` | BSD-3-Clause | Native Windows WebView2 desktop shell |
 | **Bottle** | `0.13.4` | MIT | Localhost static HTTP server used by `pywebview` |
 | **proxy-tools** | `0.1.0` | BSD-2-Clause | Dependency of `pywebview` |
