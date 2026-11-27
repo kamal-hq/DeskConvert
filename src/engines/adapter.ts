@@ -9,6 +9,47 @@ export const DESKTOP_RELEASE_URL = 'https://github.com/kamal-hq/DeskConvert/rele
 export const DESKTOP_INSTALLER_URL =
   'https://github.com/kamal-hq/DeskConvert/releases/latest/download/DeskConvert_Setup.exe';
 
+// Generous browser-memory safety caps against decompression bombs & OOM crashes
+export const WEB_MAX_FILE_BYTES = 250 * 1024 * 1024; // 250 MB per file in browser mode
+export const WEB_MAX_SESSION_BYTES = 600 * 1024 * 1024; // 600 MB total staged in browser RAM
+export const WEB_MAX_PDF_PAGES = 1000; // 1,000 pages per PDF in browser mode
+export const WEB_MAX_CANVAS_PIXELS = 64_000_000; // 64 MP per rendered canvas
+
+export function validateWebFileLimits(
+  fileName: string,
+  fileBytes: number,
+  currentSessionBytes: number
+): void {
+  if (fileBytes > WEB_MAX_FILE_BYTES) {
+    throw new Error(
+      `File "${fileName}" (${formatBytes(fileBytes)}) exceeds the ${formatBytes(WEB_MAX_FILE_BYTES)} browser safety limit. Use the Windows Desktop app for larger files.`
+    );
+  }
+  if (currentSessionBytes + fileBytes > WEB_MAX_SESSION_BYTES) {
+    throw new Error(
+      `Adding "${fileName}" would exceed the ${formatBytes(WEB_MAX_SESSION_BYTES)} browser session memory cap. Clear older files or use the Windows Desktop app.`
+    );
+  }
+}
+
+export function validateCanvasDimensions(
+  width: number,
+  height: number,
+  contextLabel = 'Image'
+): void {
+  const safeW = Math.max(0, Math.round(width));
+  const safeH = Math.max(0, Math.round(height));
+  if (safeW === 0 || safeH === 0) {
+    throw new Error(`${contextLabel} has invalid dimensions (${safeW}×${safeH}).`);
+  }
+  if (safeW * safeH > WEB_MAX_CANVAS_PIXELS) {
+    const mp = Math.round(WEB_MAX_CANVAS_PIXELS / 1_000_000);
+    throw new Error(
+      `${contextLabel} (${safeW}×${safeH} px) exceeds the ${mp} MP browser canvas safety cap to prevent memory exhaustion. Try a lower DPI or use the Windows Desktop app.`
+    );
+  }
+}
+
 export function getExtension(filename: string): string {
   const idx = filename.lastIndexOf('.');
   return idx >= 0 ? filename.slice(idx).toLowerCase() : '';

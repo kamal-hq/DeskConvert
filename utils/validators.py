@@ -1,9 +1,20 @@
 import os
 import re
+import warnings
 from typing import List
 from urllib.parse import urlsplit
 
 import pymupdf as fitz  # PyMuPDF
+from PIL import Image
+
+# Safety limits against decompression bombs and memory abuse (generous for normal files)
+MAX_IMAGE_PIXELS = 178_956_970  # ~179 megapixels (explicit Pillow decompression-bomb threshold)
+MAX_DESKTOP_FILE_BYTES = 500 * 1024 * 1024  # 500 MB per local file
+MAX_DESKTOP_UPLOAD_DROP_BYTES = 250 * 1024 * 1024  # 250 MB per IPC base64 drop
+MAX_DESKTOP_PDF_PAGES = 2_000  # 2,000 pages per PDF document
+MAX_RENDER_PIXELS = 100_000_000  # 100 megapixels per rasterized PDF page
+
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 
 WINDOWS_RESERVED_NAMES = frozenset({
     "CON",
@@ -193,3 +204,83 @@ class Validators:
         return path == ALLOWED_EXTERNAL_PATH_PREFIX or path.startswith(
             f"{ALLOWED_EXTERNAL_PATH_PREFIX}/"
         )
+
+    @staticmethod
+    def validate_file_size(
+        filepath: str,
+        max_bytes: int = MAX_DESKTOP_FILE_BYTES,
+        display_name: str | None = None,
+    ) -> int:
+        """Checks file size against the safety cap and returns the byte count."""
+        size = os.path.getsize(filepath)
+        if size > max_bytes:
+            label = display_name or os.path.basename(filepath)
+            limit_mb = max_bytes // (1024 * 1024)
+            raise ValueError(
+                f"File '{label}' exceeds the {limit_mb} MB safety cap and was blocked to prevent memory exhaustion."
+            )
+        return size
+
+    @staticmethod
+    def validate_image_safety(
+        filepath: str,
+        max_pixels: int = MAX_IMAGE_PIXELS,
+        display_name: str | None = None,
+    ) -> tuple[int, int]:
+        """Inspects image header dimensions before decoding to block decompression bombs."""
+        label = display_name or os.path.basename(filepath)
+        prev_limit = Image.MAX_IMAGE_PIXELS
+        Image.MAX_IMAGE_PIXELS = max_pixels
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", Image.DecompressionBombWarning)
+                with Image.open(filepath) as img:
+                    w, h = img.size
+            if w <= 0 or h <= 0:
+                raise ValueError(f"Image '{label}' has invalid dimensions ({w}x{h}).")
+            if w * h > max_pixels:
+                mp = round(max_pixels / 1_000_000)
+                raise ValueError(
+                    f"Image '{label}' ({w}x{h}) exceeds the {mp} MP decompression-bomb safety cap."
+                )
+            return w, h
+        except (Image.DecompressionBombError, Image.DecompressionBombWarning):
+            mp = round(max_pixels / 1_000_000)
+            raise ValueError(
+                f"Image '{label}' exceeds the {mp} MP decompression-bomb safety cap and was blocked."
+            ) from None
+        finally:
+            Image.MAX_IMAGE_PIXELS = prev_limit
+
+    @staticmethod
+    def validate_pdf_safety(
+        filepath: str,
+        max_pages: int = MAX_DESKTOP_PDF_PAGES,
+        display_name: str | None = None,
+    ) -> int:
+        """Validates PDF page count against the safety cap and returns page count."""
+        label = display_name or os.path.basename(filepath)
+        with fitz.open(filepath) as doc:
+            page_count = len(doc)
+        if page_count > max_pages:
+            raise ValueError(
+                f"PDF '{label}' has {page_count} pages, exceeding the {max_pages}-page safety cap."
+            )
+        return page_count
+
+    @staticmethod
+    def validate_render_pixmap_size(
+        width_pt: float,
+        height_pt: float,
+        dpi: float,
+        max_pixels: int = MAX_RENDER_PIXELS,
+    ) -> None:
+        """Blocks rasterizing abnormally huge PDF pages at high DPI to prevent OOM."""
+        scale = max(0.1, float(dpi)) / 72.0
+        est_w = max(1, int(round(width_pt * scale)))
+        est_h = max(1, int(round(height_pt * scale)))
+        if est_w * est_h > max_pixels:
+            mp = round(max_pixels / 1_000_000)
+            raise ValueError(
+                f"Rendering this page at {int(dpi)} DPI ({est_w}x{est_h} px) exceeds the {mp} MP memory safety cap. Choose a lower DPI."
+            )

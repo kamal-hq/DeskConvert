@@ -134,6 +134,7 @@ class PdfEngine:
 
             for page_num in target_pages:
                 page = doc.load_page(page_num)
+                Validators.validate_render_pixmap_size(page.rect.width, page.rect.height, dpi)
                 pix = page.get_pixmap(dpi=dpi, alpha=False)
                 out_path = os.path.join(safe_folder, f"{safe_stem}_page{page_num + 1}.{ext}")
                 if not Validators.is_path_within(out_path, safe_folder):

@@ -5,6 +5,9 @@ from PIL import Image
 
 from core.metadata import keep_metadata, strip_metadata
 from core.watermark import apply_watermark
+from utils.validators import MAX_IMAGE_PIXELS, Validators
+
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 
 
 class CompressionEngine:
@@ -52,6 +55,7 @@ class CompressionEngine:
         elif ext in (".png", ".bmp", ".tiff", ".tif"):
             save_format = "TIFF" if ext in (".tif", ".tiff") else ext.lstrip(".").upper()
 
+        Validators.validate_image_safety(cached_source_path)
         with Image.open(cached_source_path) as raw_img:
             img = raw_img.copy()
             exif_bytes = raw_img.info.get("exif") if metadata_action == "keep" else None

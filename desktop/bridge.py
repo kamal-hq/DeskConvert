@@ -19,7 +19,7 @@ from core.ocr_engine import OcrEngine
 from core.pdf_engine import PdfEngine
 from utils.history import HistoryManager
 from utils.settings import SettingsManager
-from utils.validators import Validators
+from utils.validators import MAX_DESKTOP_UPLOAD_DROP_BYTES, Validators
 
 logger = logging.getLogger("deskconvert.bridge")
 
@@ -435,10 +435,21 @@ class DeskConvertBridge:
             if not Validators.is_supported_file(orig_name):
                 rejected.append(orig_name)
                 continue
+            est_decoded_bytes = (len(b64) * 3) // 4
+            if est_decoded_bytes > MAX_DESKTOP_UPLOAD_DROP_BYTES:
+                limit_mb = MAX_DESKTOP_UPLOAD_DROP_BYTES // (1024 * 1024)
+                raise ValueError(
+                    f"Dropped file '{orig_name}' exceeds the {limit_mb} MB drag-and-drop cap. Use 'Browse Files' for larger files."
+                )
             try:
                 raw_bytes = base64.b64decode(b64, validate=True)
             except Exception:
                 raise ValueError(f"Invalid base64 payload for '{orig_name}'.")
+            if len(raw_bytes) > MAX_DESKTOP_UPLOAD_DROP_BYTES:
+                limit_mb = MAX_DESKTOP_UPLOAD_DROP_BYTES // (1024 * 1024)
+                raise ValueError(
+                    f"Dropped file '{orig_name}' exceeds the {limit_mb} MB drag-and-drop cap."
+                )
 
             base, ext = os.path.splitext(orig_name)
             safe_base = Validators.sanitize_filename_stem(base, fallback="file")
@@ -449,13 +460,21 @@ class DeskConvertBridge:
             with open(cached_path, "wb") as f:
                 f.write(raw_bytes)
 
-            if Validators.is_password_protected(cached_path):
+            try:
+                if Validators.is_password_protected(cached_path):
+                    os.remove(cached_path)
+                    encrypted.append(orig_name)
+                    continue
+                if Validators.is_image(orig_name):
+                    Validators.validate_image_safety(cached_path, display_name=orig_name)
+                elif Validators.is_pdf(orig_name):
+                    Validators.validate_pdf_safety(cached_path, display_name=orig_name)
+            except ValueError:
                 try:
                     os.remove(cached_path)
                 except OSError:
                     pass
-                encrypted.append(orig_name)
-                continue
+                raise
 
             source_id = f"dsrc_{uuid.uuid4().hex[:10]}"
             self._id_to_cached[source_id] = cached_path

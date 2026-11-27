@@ -47,6 +47,7 @@ class ImageEngine:
             if not Validators.is_path_within(out_path, safe_folder):
                 raise ValueError("Refused to write image outside target directory.")
 
+        Validators.validate_image_safety(cached_source_path)
         with Image.open(cached_source_path) as img:
             exif_bytes = img.info.get("exif") if metadata_action == "keep" else None
 

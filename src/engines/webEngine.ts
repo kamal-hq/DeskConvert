@@ -13,10 +13,13 @@ import type {
 } from '../types';
 import {
   WATERMARK_TEXT,
+  WEB_MAX_PDF_PAGES,
   expandRangesToZeroBasedIndices,
   getFileStem,
   isPdfName,
   normalizePageRanges,
+  validateCanvasDimensions,
+  validateWebFileLimits,
 } from './adapter';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
@@ -60,9 +63,12 @@ async function renderPdfPageToCanvas(
     const page = await pdf.getPage(safePage);
     const scale = dpi / 72;
     const viewport = page.getViewport({ scale });
+    const targetW = Math.max(1, Math.round(viewport.width));
+    const targetH = Math.max(1, Math.round(viewport.height));
+    validateCanvasDimensions(targetW, targetH, `PDF page ${safePage} at ${dpi} DPI`);
     const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(viewport.width));
-    canvas.height = Math.max(1, Math.round(viewport.height));
+    canvas.width = targetW;
+    canvas.height = targetH;
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas 2D context unavailable.');
     ctx.fillStyle = '#ffffff';
@@ -77,17 +83,20 @@ async function renderPdfPageToCanvas(
 async function imageBytesToCanvas(bytes: Uint8Array, mimeHint = 'image/png'): Promise<HTMLCanvasElement> {
   const blob = new Blob([bytes.slice()], { type: mimeHint });
   const bitmap = await createImageBitmap(blob);
-  const canvas = document.createElement('canvas');
-  canvas.width = bitmap.width;
-  canvas.height = bitmap.height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
+  try {
+    validateCanvasDimensions(bitmap.width, bitmap.height, 'Image');
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      throw new Error('Canvas 2D context unavailable.');
+    }
+    ctx.drawImage(bitmap, 0, 0);
+    return canvas;
+  } finally {
     bitmap.close();
-    throw new Error('Canvas 2D context unavailable.');
   }
-  ctx.drawImage(bitmap, 0, 0);
-  bitmap.close();
-  return canvas;
 }
 
 async function renderItemToCanvas(item: StoryboardItem, dpi = 300): Promise<HTMLCanvasElement> {
@@ -337,6 +346,11 @@ export async function ingestWebFiles(files: File[]): Promise<{
   const rejected: string[] = [];
   const encrypted: string[] = [];
 
+  let sessionBytes = 0;
+  for (const existing of sourceStore.values()) {
+    sessionBytes += existing.sizeBytes;
+  }
+
   for (const file of files) {
     const name = file.name;
     const isPdf = isPdfName(name);
@@ -348,6 +362,7 @@ export async function ingestWebFiles(files: File[]): Promise<{
       continue;
     }
 
+    validateWebFileLimits(name, file.size, sessionBytes);
     const bytes = new Uint8Array(await file.arrayBuffer());
     const sourceId = makeId('src');
 
@@ -366,6 +381,12 @@ export async function ingestWebFiles(files: File[]): Promise<{
 
       try {
         const pageCount = Math.max(1, pdf.numPages);
+        if (pageCount > WEB_MAX_PDF_PAGES) {
+          throw new Error(
+            `PDF "${name}" has ${pageCount} pages, exceeding the ${WEB_MAX_PDF_PAGES}-page browser safety cap. Use the Windows Desktop app for very large PDFs.`
+          );
+        }
+        sessionBytes += file.size;
         sourceStore.set(sourceId, {
           sourceId,
           fileName: name,
@@ -405,6 +426,8 @@ export async function ingestWebFiles(files: File[]): Promise<{
         await pdf.destroy();
       }
     } else {
+      const canvas = await imageBytesToCanvas(bytes, file.type || 'image/png');
+      sessionBytes += file.size;
       sourceStore.set(sourceId, {
         sourceId,
         fileName: name,
@@ -413,7 +436,6 @@ export async function ingestWebFiles(files: File[]): Promise<{
         sizeBytes: file.size,
         pageCount: 1,
       });
-      const canvas = await imageBytesToCanvas(bytes, file.type || 'image/png');
       const ratio = Math.min(1, 240 / Math.max(1, canvas.width));
       const thumb = document.createElement('canvas');
       thumb.width = Math.max(1, Math.round(canvas.width * ratio));

@@ -10,6 +10,10 @@ from typing import Dict, List, Optional
 import pymupdf as fitz
 from PIL import Image
 
+from utils.validators import MAX_IMAGE_PIXELS, Validators
+
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
+
 
 class CacheManager:
     """Stages source files into an isolated OS temp dir and renders thumbnails/previews."""
@@ -20,14 +24,20 @@ class CacheManager:
         atexit.register(self.clear_cache)
 
     def stage_file(self, source_filepath: str) -> str:
-        """Copies source file into temp directory. Returns cached copy path."""
+        """Copies source file into temp directory after safety checks. Returns cached copy path."""
         if not os.path.isfile(source_filepath):
             raise FileNotFoundError(f"Source file not found: {source_filepath}")
 
         if source_filepath in self.file_map and os.path.exists(self.file_map[source_filepath]):
             return self.file_map[source_filepath]
 
-        filename = os.path.basename(source_filepath)
+        Validators.validate_file_size(source_filepath)
+        if Validators.is_image(source_filepath):
+            Validators.validate_image_safety(source_filepath)
+        elif Validators.is_pdf(source_filepath):
+            Validators.validate_pdf_safety(source_filepath)
+
+        filename = Validators.sanitize_filename(os.path.basename(source_filepath), fallback_stem="file")
         base, ext = os.path.splitext(filename)
         unique_name = f"{base}_{uuid.uuid4().hex[:8]}{ext}"
         cached_path = os.path.join(self.temp_dir, unique_name)
@@ -77,9 +87,11 @@ class CacheManager:
                     raise ValueError("PDF contains no pages.")
                 safe_page = max(0, min(page_number, len(doc) - 1))
                 page = doc.load_page(safe_page)
+                Validators.validate_render_pixmap_size(page.rect.width, page.rect.height, dpi)
                 scale = dpi / 72.0
                 pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
                 return pix.tobytes("png")
+        Validators.validate_image_safety(cached_filepath)
         with Image.open(cached_filepath) as img:
             copy = img.copy()
             if copy.mode not in ("RGB", "RGBA"):
