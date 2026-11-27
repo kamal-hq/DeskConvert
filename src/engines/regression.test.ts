@@ -156,6 +156,12 @@ describe('security-compliance-audit web regression suite', () => {
     for (const url of urls) {
       expect(url.startsWith('https://github.com/kamal-hq/DeskConvert')).toBe(true);
     }
+
+    // Web OCR pins exact CDN versions (no mutable @latest tag)
+    const webEngineSrc = fs.readFileSync(path.join(REPO_ROOT, 'src/engines/webEngine.ts'), 'utf-8');
+    expect(webEngineSrc).toContain('https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js');
+    expect(webEngineSrc).toContain('https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1');
+    expect(webEngineSrc).toContain('https://cdn.jsdelivr.net/npm/@tesseract.js-data/eng@1.0.0/4.0.0_best_int');
   });
 
   it('keeps generous web safety caps for normal documents while blocking extreme bombs', () => {

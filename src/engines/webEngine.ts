@@ -829,7 +829,13 @@ export async function runWebOcr(
   const stem = getFileStem(targets[0].fileName);
 
   onProgress?.(5, 'Initializing local Tesseract OCR engine…');
-  const worker = await createWorker('eng');
+  // Pinned exact CDN versions (tesseract.js@5.1.1, tesseract.js-core@5.1.1, @tesseract.js-data/eng@1.0.0)
+  // to prevent mutable @latest tag drift on jsDelivr.
+  const worker = await createWorker('eng', 1, {
+    workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js',
+    corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1',
+    langPath: 'https://cdn.jsdelivr.net/npm/@tesseract.js-data/eng@1.0.0/4.0.0_best_int',
+  });
 
   try {
     const pageTexts: string[] = [];
