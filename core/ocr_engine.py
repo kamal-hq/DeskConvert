@@ -8,6 +8,9 @@ import pytesseract
 from pdf2image import convert_from_path
 from PIL import Image
 
+from utils.validators import MAX_IMAGE_PIXELS, Validators
+
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif"}
 
 
@@ -70,7 +73,9 @@ class OcrEngine:
     def _load_pages_as_images(cached_path: str) -> List[Image.Image]:
         ext = os.path.splitext(cached_path)[1].lower()
         if ext in IMAGE_EXTS:
+            Validators.validate_image_safety(cached_path)
             return [Image.open(cached_path).convert("RGB")]
+        Validators.validate_pdf_safety(cached_path)
 
         poppler_path = _discover_poppler()
         try:

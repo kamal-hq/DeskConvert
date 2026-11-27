@@ -8,6 +8,7 @@ from PIL import Image as PilImage
 from core.export import ExportEngine
 from core.metadata import keep_metadata, strip_metadata
 from core.watermark import apply_watermark
+from utils.validators import Validators
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif"}
 
@@ -114,8 +115,10 @@ class PdfEngine:
         metadata_action: str = "keep",
     ) -> List[str]:
         """Extracts selected (or all) pages as images into output_folder."""
-        os.makedirs(output_folder, exist_ok=True)
-        ext = fmt.lower().lstrip(".")
+        safe_folder = Validators.validate_local_path(output_folder)
+        safe_stem = Validators.sanitize_filename_stem(filename_stem, fallback="document")
+        os.makedirs(safe_folder, exist_ok=True)
+        ext = "".join(ch for ch in fmt.lower().lstrip(".") if ch.isalnum())[:8]
         if ext == "jpeg":
             ext = "jpg"
 
@@ -131,11 +134,14 @@ class PdfEngine:
 
             for page_num in target_pages:
                 page = doc.load_page(page_num)
+                Validators.validate_render_pixmap_size(page.rect.width, page.rect.height, dpi)
                 pix = page.get_pixmap(dpi=dpi, alpha=False)
-                out_path = os.path.join(output_folder, f"{filename_stem}_page{page_num + 1}.{ext}")
+                out_path = os.path.join(safe_folder, f"{safe_stem}_page{page_num + 1}.{ext}")
+                if not Validators.is_path_within(out_path, safe_folder):
+                    raise ValueError("Refused to write image outside target directory.")
                 if os.path.exists(out_path):
                     out_path = ExportEngine.safe_output_path(
-                        output_folder, f"{filename_stem}_page{page_num + 1}", f".{ext}"
+                        safe_folder, f"{safe_stem}_page{page_num + 1}", f".{ext}"
                     )
                 pix.save(out_path)
                 PdfEngine._post_process(out_path, watermark_enabled, metadata_action)
@@ -220,7 +226,9 @@ class PdfEngine:
                 output_paths.append(output_path_or_folder)
 
             elif output_mode == "individual":
-                os.makedirs(output_path_or_folder, exist_ok=True)
+                safe_folder = Validators.validate_local_path(output_path_or_folder)
+                safe_stem = Validators.sanitize_filename_stem(filename_stem, fallback="document")
+                os.makedirs(safe_folder, exist_ok=True)
                 seen_pages = set()
                 for start, end in clamped_ranges:
                     for page_num in range(start, end + 1):
@@ -228,11 +236,13 @@ class PdfEngine:
                             continue
                         seen_pages.add(page_num)
                         out_path = os.path.join(
-                            output_path_or_folder, f"{filename_stem}_page{page_num}.pdf"
+                            safe_folder, f"{safe_stem}_page{page_num}.pdf"
                         )
+                        if not Validators.is_path_within(out_path, safe_folder):
+                            raise ValueError("Refused to write split PDF outside target directory.")
                         if os.path.exists(out_path):
                             out_path = ExportEngine.safe_output_path(
-                                output_path_or_folder, f"{filename_stem}_page{page_num}", ".pdf"
+                                safe_folder, f"{safe_stem}_page{page_num}", ".pdf"
                             )
                         with fitz.open() as new_doc:
                             new_doc.insert_pdf(doc, from_page=page_num - 1, to_page=page_num - 1)

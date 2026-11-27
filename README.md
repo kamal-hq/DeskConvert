@@ -15,6 +15,22 @@
 - **Web App (Zero Uploads):** Runs 100% locally in your browser at **[desk-convert.vercel.app](https://desk-convert.vercel.app/)** using WebAssembly (`pdf-lib`, `pdfjs-dist`, HTML5 Canvas, `jszip`, and `tesseract.js`). Your files never leave your device.
 - **Windows Desktop App (`DeskConvert_Setup.exe`):** Uses the exact same studio UI wrapped in a native WebView2 shell (`pywebview`) powered by offline Python engines (`PyMuPDF`, `Pillow`, `Tesseract OCR`, `Poppler`) for large batches, recursive folder drops, and Quick Save.
 
+### Windows SmartScreen & SHA-256 Verification
+
+Because DeskConvert is an independent open-source project distributed without a paid EV code-signing certificate, **Windows Defender SmartScreen** may show a *"Windows protected your PC"* warning when you first launch `DeskConvert_Setup.exe`.
+
+Before clicking **More info → Run anyway**, verify that your download came directly from the official [GitHub Releases](https://github.com/kamal-hq/DeskConvert/releases) page and confirm its SHA-256 checksum matches the hash published in the release notes:
+
+```powershell
+# PowerShell
+Get-FileHash .\DeskConvert_Setup.exe -Algorithm SHA256
+
+# Or Command Prompt
+certutil -hashfile DeskConvert_Setup.exe SHA256
+```
+
+Do not run the installer if the computed SHA-256 does not match the official release hash.
+
 ---
 
 ## Features
@@ -69,16 +85,24 @@ python -m pytest tests/test_core.py tests/test_bridge.py -v
 
 ```bash
 npm run build
+python desktop/verify_installer_assets.py   # verifies pinned SHA-256 hashes for Tesseract & Poppler
 pyinstaller DeskConvert.spec --noconfirm
-iscc DeskConvert.iss
+iscc DeskConvert.iss                        # also runs verify_installer_assets.py automatically at compile time
 ```
 
 Installer output: `installer_output/DeskConvert_Setup.exe`
+
+Publish the release SHA-256 hash alongside `DeskConvert_Setup.exe`:
+
+```powershell
+Get-FileHash .\installer_output\DeskConvert_Setup.exe -Algorithm SHA256
+```
 
 ---
 
 ## Author & License
 
-- **Developer**: Muhammad Kamal
+- **Developer**: Muhammad Kamal (`muhammad.kamal.hq@gmail.com`)
 - **Repository**: [kamal-hq/DeskConvert](https://github.com/kamal-hq/DeskConvert)
-- **License**: MIT
+- **Source & Web Studio License**: MIT ([LICENSE](LICENSE))
+- **Windows Desktop Binary Distribution License**: GNU AGPL-3.0 ([LICENSE-DESKTOP-AGPL-3.0.txt](LICENSE-DESKTOP-AGPL-3.0.txt), due to bundled PyMuPDF/MuPDF & Poppler; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md))

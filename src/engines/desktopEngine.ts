@@ -30,6 +30,7 @@ export interface DesktopBridgeApi {
   get_history(): Promise<HistoryEntry[]>;
   clear_history(): Promise<void>;
   open_path(path: string): Promise<void>;
+  open_external_url(url: string): Promise<boolean>;
   export_pdf_to_images(payload: {
     items: Array<{ sourceId: string; pageIndex: number }>;
     format: ImageOutputFormat;

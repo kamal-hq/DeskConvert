@@ -45,5 +45,12 @@ desktop.ini
 *.log
 logs/
 
-# Local settings override
+# Local settings override & environment secrets
 local_settings.py
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx

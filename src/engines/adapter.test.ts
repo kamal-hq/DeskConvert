@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  WEB_MAX_CANVAS_PIXELS,
+  WEB_MAX_FILE_BYTES,
+  WEB_MAX_SESSION_BYTES,
   analyzeCompressionTarget,
   expandRangesToZeroBasedIndices,
   formatBytes,
@@ -8,6 +11,8 @@ import {
   isPdfName,
   isSupportedFileName,
   normalizePageRanges,
+  validateCanvasDimensions,
+  validateWebFileLimits,
 } from './adapter';
 
 describe('adapter helpers', () => {
@@ -48,5 +53,27 @@ describe('adapter helpers', () => {
     expect(est).not.toBeNull();
     expect(est?.reductionPercent).toBe(50);
     expect(formatBytes(1536)).toBe('1.5 KB');
+  });
+
+  it('enforces browser file-size, session-size, and canvas-pixel safety caps cleanly', () => {
+    // Normal files and high-DPI A4 canvases pass
+    expect(() => validateWebFileLimits('report.pdf', 25 * 1024 * 1024, 0)).not.toThrow();
+    expect(() => validateCanvasDimensions(4960, 7016, 'A4 @ 600 DPI')).not.toThrow(); // ~34.8 MP
+
+    // Oversized single file rejected clearly
+    expect(() =>
+      validateWebFileLimits('huge.pdf', WEB_MAX_FILE_BYTES + 1, 0)
+    ).toThrow(/browser safety limit/i);
+
+    // Session RAM cap rejected clearly
+    expect(() =>
+      validateWebFileLimits('batch.pdf', 100 * 1024 * 1024, WEB_MAX_SESSION_BYTES - 10)
+    ).toThrow(/session memory cap/i);
+
+    // Decompression bomb canvas rejected clearly
+    const bombDim = Math.ceil(Math.sqrt(WEB_MAX_CANVAS_PIXELS)) + 100;
+    expect(() => validateCanvasDimensions(bombDim, bombDim, 'Bomb image')).toThrow(
+      /canvas safety cap/i
+    );
   });
 });

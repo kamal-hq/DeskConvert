@@ -1,4 +1,5 @@
 import os
+import pytest
 import pymupdf as fitz
 from PIL import Image
 
@@ -143,3 +144,59 @@ def test_settings_history_and_validators(tmp_path):
     assert Validators.compression_target_valid(80, 100) is True
     assert Validators.compression_target_valid(95, 100) is False
     assert os.path.basename(ExportEngine.safe_output_path(str(tmp_path), "doc", ".pdf")).startswith("doc_converted_")
+
+
+def test_decompression_bomb_and_memory_safety_caps(tmp_path):
+    # Normal image passes easily
+    normal_img = str(tmp_path / "normal.png")
+    _make_sample_image(normal_img, size=(400, 300))
+    assert Validators.validate_image_safety(normal_img) == (400, 300)
+
+    # Exceeding max_pixels fails with a clear decompression-bomb error
+    with pytest.raises(ValueError, match="decompression-bomb safety cap"):
+        Validators.validate_image_safety(normal_img, max_pixels=50_000)
+
+    # File size cap fails with a clear error
+    with pytest.raises(ValueError, match="safety cap"):
+        Validators.validate_file_size(normal_img, max_bytes=10)
+
+    # PDF page count cap fails with a clear error
+    pdf_path = str(tmp_path / "three_pages.pdf")
+    _make_sample_pdf(pdf_path, pages=3)
+    assert Validators.validate_pdf_safety(pdf_path, max_pages=10) == 3
+    with pytest.raises(ValueError, match="page safety cap"):
+        Validators.validate_pdf_safety(pdf_path, max_pages=2)
+
+    # Abnormally huge MediaBox PDF page at high DPI blocked before rasterization
+    Validators.validate_render_pixmap_size(595.0, 842.0, 600)  # Normal A4 at 600 DPI (~35 MP) passes
+    with pytest.raises(ValueError, match="memory safety cap"):
+        Validators.validate_render_pixmap_size(20_000.0, 20_000.0, 600)  # Malicious giant page blocked
+
+
+def test_installer_asset_checksum_verification(tmp_path):
+    from desktop.verify_installer_assets import generate_manifest, verify_assets
+
+    assets_dir = tmp_path / "installer_assets"
+    poppler_dir = assets_dir / "poppler" / "bin"
+    poppler_dir.mkdir(parents=True)
+    (assets_dir / "tesseract-installer.exe").write_bytes(b"fake-tesseract-binary")
+    (poppler_dir / "pdftoppm.exe").write_bytes(b"fake-poppler-binary")
+    manifest_path = str(tmp_path / "installer_checksums.json")
+
+    generate_manifest(str(assets_dir), manifest_path)
+    ok, errors = verify_assets(str(assets_dir), manifest_path)
+    assert ok is True
+    assert errors == []
+
+    # Tampering a single byte must fail verification
+    (assets_dir / "tesseract-installer.exe").write_bytes(b"tampered-tesseract!!")
+    ok, errors = verify_assets(str(assets_dir), manifest_path)
+    assert ok is False
+    assert any("SHA-256 MISMATCH" in e for e in errors)
+
+    # Unexpected extra file must fail verification
+    (assets_dir / "tesseract-installer.exe").write_bytes(b"fake-tesseract-binary")
+    (poppler_dir / "evil.dll").write_bytes(b"unpinned")
+    ok, errors = verify_assets(str(assets_dir), manifest_path)
+    assert ok is False
+    assert any("UNEXPECTED" in e for e in errors)

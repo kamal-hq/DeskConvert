@@ -3,6 +3,12 @@
 #define MyAppPublisher "Muhammad Kamal"
 #define MyAppExeName "DeskConvert.exe"
 
+; Verify pinned SHA-256 hashes for bundled Tesseract & Poppler binaries before compiling
+#define VerifyExitCode Exec("python", "desktop\verify_installer_assets.py", ".", 1, 0)
+#if VerifyExitCode != 0
+  #error "Installer asset SHA-256 verification failed. Run 'python desktop/verify_installer_assets.py' to inspect mismatches."
+#endif
+
 [Setup]
 AppId={{DC2024-DESKCONVERT-MK-001}
 AppName={#MyAppName}
@@ -20,6 +26,7 @@ PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64
 UninstallDisplayIcon={app}\DeskConvert.exe
 SetupIconFile=assets\icon.ico
+LicenseFile=LICENSE-DESKTOP-AGPL-3.0.txt
 MinVersion=10.0
 
 [Languages]
@@ -35,6 +42,11 @@ Name: "desktopicon"; \
 Source: "dist\DeskConvert\*"; \
   DestDir: "{app}"; \
   Flags: ignoreversion recursesubdirs createallsubdirs
+
+; License & third-party attribution notices (AGPL-3.0 desktop distribution + MIT source)
+Source: "LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "LICENSE-DESKTOP-AGPL-3.0.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Poppler binaries
 Source: "installer_assets\poppler\bin\*"; \
